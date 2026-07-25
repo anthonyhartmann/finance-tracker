@@ -229,9 +229,16 @@ function setupPlaidProduction() {
 function generateProdLinkToken() {
   Debug.log("generateProdLinkToken", "Generating production link token...");
   
-  var url = PLAID._baseUrl();
-  if (url.indexOf("sandbox") !== -1) {
+  var props = PropertiesService.getScriptProperties();
+  var env = props.getProperty("PLAID_ENVIRONMENT") || "sandbox";
+  if (env !== "production") {
     Debug.error("generateProdLinkToken", "Still in sandbox mode. Run setupPlaidProduction() first.");
+    return;
+  }
+  
+  var clientId = props.getProperty("PLAID_CLIENT_ID");
+  if (!clientId) {
+    Debug.error("generateProdLinkToken", "No client_id found. Run setupPlaidProduction() first.");
     return;
   }
   
@@ -252,7 +259,8 @@ function generateProdLinkToken() {
     Debug.log("generateProdLinkToken", "");
     Debug.log("generateProdLinkToken", "=== ACTION REQUIRED ===");
     Debug.log("generateProdLinkToken", "Open this URL in a browser:");
-    Debug.log("generateProdLinkToken", "https://plaid.com/link/?token=" + data.link_token);
+    Debug.log("generateProdLinkToken", "Open this URL in a browser:");
+    Debug.log("generateProdLinkToken", "https://cdn.plaid.com/link/v2/stable/link.html?key=" + clientId + "&token=" + data.link_token);
     Debug.log("generateProdLinkToken", "Log into your bank and grant access.");
     Debug.log("generateProdLinkToken", "When done, run exchangeProdPublicToken() with the public_token from the redirect URL.");
   } catch (err) {
