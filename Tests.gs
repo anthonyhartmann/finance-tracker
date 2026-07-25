@@ -25,7 +25,7 @@ function testDebugLogging() {
   Debug.log("testDebugLogging", "Self-test passed — Debug module loaded correctly");
   Debug.log("testDebugLogging", "Debug tab initialized");
   Debug.logRaw("testDebugLogging", { status: "ok", timestamp: new Date().toISOString() });
-  Debug.log("testDebugLogging", "✅ Debug system works! Check the debug tab.");
+  Debug.log("testDebugLogging", "[OK] Debug system works. Check the debug tab.");
 }
 
 /**
@@ -54,7 +54,7 @@ function setupPlaidConfig() {
   props.setProperty("PLAID_SECRET", secret.getResponseText());
   props.setProperty("PLAID_ENVIRONMENT", "sandbox");
   
-  Debug.log("setupPlaidConfig", "✅ Plaid sandbox credentials stored in ScriptProperties");
+  Debug.log("setupPlaidConfig", "[OK] Plaid sandbox credentials stored in ScriptProperties");
 }
 
 /**
@@ -106,8 +106,8 @@ function testPlaidConnection() {
     Debug.logRaw("testPlaidConnection", responseBody);
     
     if (responseBody.link_token) {
-      Debug.log("testPlaidConnection", "✅ Success! Link token received.");
-      Debug.log("testPlaidConnection", `Link token preview: ${responseBody.link_token.substring(0, 20)}...`);
+      Debug.log("testPlaidConnection", "[OK] Success! Link token received.");
+      Debug.log("testPlaidConnection", "Link token preview: " + responseBody.link_token.substring(0, 20) + "...");
     } else if (responseBody.error_type) {
       Debug.error("testPlaidConnection", `Plaid error: ${responseBody.error_type} — ${responseBody.error_message}`);
     }
