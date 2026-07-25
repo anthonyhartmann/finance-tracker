@@ -109,3 +109,32 @@ function getWebhookUrl() {
   Debug.log("getWebhookUrl", "Web app URL: " + url);
   return url;
 }
+
+/**
+ * Store the webhook URL and update all existing sandbox items.
+ * Run this after deploying the web app.
+ */
+function configureWebhook() {
+  var url = "https://script.google.com/macros/s/AKfycbxYszvhe8-v7YZaF78oRzVCR6JBbIUITtbjKEI8vdYk-BdXsRctAEOmcruzFXv2RQ2S/exec";
+  PropertiesService.getScriptProperties().setProperty("WEBHOOK_URL", url);
+  Debug.log("configureWebhook", "Webhook URL stored: " + url);
+  
+  // Update webhook for all existing sandbox items
+  var items = ["platypus", "platypus2", "platypus3"];
+  for (var i = 0; i < items.length; i++) {
+    var token = PLAID.getAccessToken(items[i]);
+    if (token) {
+      try {
+        var data = PLAID._post("/item/webhook/update", {
+          access_token: token,
+          webhook: url
+        });
+        Debug.log("configureWebhook", "Updated webhook for: " + items[i]);
+      } catch (e) {
+        Debug.error("configureWebhook", "Failed for " + items[i] + ": " + e.message);
+      }
+    }
+  }
+  
+  Debug.log("configureWebhook", "[OK] Webhook configured for all items.");
+}

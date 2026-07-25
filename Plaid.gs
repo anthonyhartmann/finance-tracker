@@ -64,7 +64,7 @@ const PLAID = {
       institution_id: "ins_109508",  // First Platypus Bank
       initial_products: ["transactions"],
       options: {
-        webhook: "https://script.google.com/macros/s/" + ScriptApp.getScriptId() + "/exec"
+        webhook: PropertiesService.getScriptProperties().getProperty("WEBHOOK_URL") || "https://script.google.com/macros/s/AKfycbxYszvhe8-v7YZaF78oRzVCR6JBbIUITtbjKEI8vdYk-BdXsRctAEOmcruzFXv2RQ2S/exec"
       }
     });
     
