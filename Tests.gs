@@ -251,7 +251,7 @@ function generateProdLinkToken() {
       language: "en",
       webhook: PropertiesService.getScriptProperties().getProperty("WEBHOOK_URL"),
       link_customization_name: "default",
-      redirect_uri: "https://script.google.com"
+      redirect_uri: PropertiesService.getScriptProperties().getProperty("WEBHOOK_URL")
     });
     
     Debug.log("generateProdLinkToken", "Link token generated.");

@@ -58,9 +58,22 @@ function doPost(e) {
 }
 
 /**
- * Handle GET requests (just for testing).
+ * Handle GET requests — captures Plaid Link redirect with public_token.
  */
-function doGet() {
+function doGet(e) {
+  Debug.ensureTab();
+  
+  // Check if this is a Plaid Link redirect with a public_token
+  if (e && e.parameter && e.parameter.public_token) {
+    Debug.log("doGet", "=== PLAID LINK REDIRECT RECEIVED ===");
+    Debug.log("doGet", "public_token: " + e.parameter.public_token);
+    Debug.log("doGet", "Run exchangeProdPublicToken() and paste this token.");
+    return ContentService.createTextOutput(
+      "Finance Tracker - Plaid Link connected! "
+      + "Public token received. You can close this tab."
+    ).setMimeType(ContentService.MimeType.TEXT);
+  }
+  
   return ContentService.createTextOutput("Webhook endpoint is live. POST only.")
     .setMimeType(ContentService.MimeType.TEXT);
 }
