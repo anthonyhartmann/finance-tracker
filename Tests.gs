@@ -227,7 +227,7 @@ function setupPlaidProduction() {
  * After running this, open the returned URL in a browser to connect your bank.
  */
 function generateProdLinkToken() {
-  Debug.log("generateProdLinkToken", "Generating production link token...");
+  Debug.log("generateProdLinkToken", "Generating Multi-Item Link token (one session for all banks)...");
   
   var props = PropertiesService.getScriptProperties();
   var env = props.getProperty("PLAID_ENVIRONMENT") || "sandbox";
@@ -243,13 +243,24 @@ function generateProdLinkToken() {
   }
   
   try {
+    // Step 1: Create a user for Multi-Item Link
+    Debug.log("generateProdLinkToken", "Creating user for Multi-Item Link...");
+    var userResult = PLAID._post("/user/create", {
+      client_user_id: "anthony-" + new Date().getTime()
+    });
+    var userId = userResult.user_id;
+    Debug.log("generateProdLinkToken", "User ID: " + userId);
+    props.setProperty("PLAID_USER_ID", userId);
+    
+    // Step 2: Create link token with enable_multi_item_link: true
     var data = PLAID._post("/link/token/create", {
       client_name: "Finance Tracker",
-      user: { client_user_id: "anthony-1" },
+      user_id: userId,
+      enable_multi_item_link: true,
       products: ["transactions"],
       country_codes: ["US"],
       language: "en",
-      webhook: PropertiesService.getScriptProperties().getProperty("WEBHOOK_URL"),
+      webhook: props.getProperty("WEBHOOK_URL"),
       link_customization_name: "default"
     });
     
@@ -274,7 +285,6 @@ function generateProdLinkToken() {
  * Exchange a production public_token from the Plaid Link redirect.
  */
 function exchangeProdPublicToken() {
-  // Get the last link_token that was generated
   var props = PropertiesService.getScriptProperties();
   var linkToken = props.getProperty("LAST_LINK_TOKEN");
   
@@ -283,38 +293,57 @@ function exchangeProdPublicToken() {
     return;
   }
   
-  Debug.log("exchangeProdPublicToken", "Checking link token status...");
+  Debug.log("exchangeProdPublicToken", "Checking Multi-Item Link session status...");
   
   try {
-    // Call /link/token/get to retrieve the public_token if the session completed
     var data = PLAID._post("/link/token/get", {
       link_token: linkToken
     });
     
-    var publicToken = data.public_token;
-    if (!publicToken) {
-      Debug.error("exchangeProdPublicToken", "No public_token yet. Complete the Plaid Link flow in your browser first, then run this again.");
-      Debug.log("exchangeProdPublicToken", "Link token status: " + JSON.stringify(data));
+    Debug.logRaw("exchangeProdPublicToken", data);
+    
+    // Check for item_add_results (Multi-Item Link)
+    var items = [];
+    if (data.results && data.results.item_add_results) {
+      items = data.results.item_add_results;
+    } else if (data.link_sessions && data.link_sessions.length > 0) {
+      var session = data.link_sessions[data.link_sessions.length - 1];
+      if (session.results && session.results.item_add_results) {
+        items = session.results.item_add_results;
+      }
+    }
+    
+    if (items.length === 0) {
+      Debug.error("exchangeProdPublicToken", "No connected banks found. Complete the Plaid Link flow first.");
+      Debug.log("exchangeProdPublicToken", "Raw response: " + JSON.stringify(data));
       return;
     }
     
-    Debug.log("exchangeProdPublicToken", "Public token retrieved, exchanging for access token...");
-    var accessToken = PLAID.exchangePublicToken(publicToken);
+    Debug.log("exchangeProdPublicToken", "Found " + items.length + " connected bank(s). Exchanging tokens...");
     
     var ui = SpreadsheetApp.getUi();
-    var nameResult = ui.prompt(
-      "Account Name",
-      "Which account is this? (e.g. ally, bofa, chase, discover):",
-      ui.ButtonSet.OK_CANCEL
-    );
-    if (nameResult.getSelectedButton() !== ui.Button.OK) return;
-    
-    var itemName = nameResult.getResponseText().trim();
-    PLAID.storeAccessToken(itemName, accessToken);
-    var accounts = PLAID.getAccounts(itemName);
+    for (var i = 0; i < items.length; i++) {
+      var publicToken = items[i].public_token;
+      var institutionName = items[i].institution ? items[i].institution.name : "Bank " + (i + 1);
+      
+      Debug.log("exchangeProdPublicToken", "Exchanging token for: " + institutionName);
+      
+      var accessToken = PLAID.exchangePublicToken(publicToken);
+      
+      var nameResult = ui.prompt(
+        "Name this account",
+        "Connected: " + institutionName + " -- Enter a short name (e.g. ally, bofa, chase, discover):",
+        ui.ButtonSet.OK_CANCEL
+      );
+      var itemName = (nameResult.getSelectedButton() === ui.Button.OK) ? nameResult.getResponseText().trim() : institutionName.toLowerCase().replace(/[^a-z0-9]/g, "");
+      
+      PLAID.storeAccessToken(itemName, accessToken);
+      Debug.log("exchangeProdPublicToken", "[OK] " + itemName + " linked.");
+    }
     
     props.deleteProperty("LAST_LINK_TOKEN");
-    Debug.log("exchangeProdPublicToken", "[OK] " + itemName + " linked. Run syncProductionAccount('" + itemName + "') to pull data.");
+    props.deleteProperty("PLAID_USER_ID");
+    Debug.log("exchangeProdPublicToken", "[OK] All banks linked. Run syncAllProductionAccounts() to pull data.");
   } catch (err) {
     Debug.error("exchangeProdPublicToken", err);
   }
@@ -337,6 +366,42 @@ function syncProductionAccount(itemName) {
   SHEET.writeBalances(balances);
   
   Debug.log("syncProductionAccount", "[OK] " + itemName + " synced: " + transactions.length + " transactions.");
+}
+
+/**
+ * Sync ALL linked production accounts and refresh dashboard.
+ */
+function syncAllProductionAccounts() {
+  Debug.log("syncAllProductionAccounts", "Syncing all linked accounts...");
+  
+  var props = PropertiesService.getScriptProperties();
+  var keys = props.getKeys();
+  var synced = 0;
+  
+  for (var i = 0; i < keys.length; i++) {
+    if (keys[i].indexOf("ACCESS_TOKEN_") === 0) {
+      var itemName = keys[i].replace("ACCESS_TOKEN_", "");
+      Debug.log("syncAllProductionAccounts", "Syncing: " + itemName);
+      
+      try {
+        var transactions = PLAID.syncTransactions(itemName);
+        SHEET.writeTransactions(transactions);
+        
+        var balances = PLAID.fetchBalances(itemName);
+        SHEET.writeBalances(balances);
+        
+        Debug.log("syncAllProductionAccounts", itemName + " done: " + transactions.length + " transactions");
+        synced++;
+      } catch (e) {
+        Debug.error("syncAllProductionAccounts", itemName + " failed: " + e.message);
+      }
+    }
+  }
+  
+  // Refresh dashboard
+  DASHBOARD.refresh();
+  
+  Debug.log("syncAllProductionAccounts", "[OK] " + synced + " accounts synced. Dashboard refreshed.");
 }
 
 
