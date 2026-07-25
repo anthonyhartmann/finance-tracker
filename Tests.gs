@@ -252,16 +252,14 @@ function generateProdLinkToken() {
     Debug.log("generateProdLinkToken", "User ID: " + userId);
     props.setProperty("PLAID_USER_ID", userId);
     
-    // Step 2: Create link token with enable_multi_item_link: true
+    // Step 2: Create link token (minimal config)
     var data = PLAID._post("/link/token/create", {
       client_name: "Finance Tracker",
       user_id: userId,
       enable_multi_item_link: true,
       products: ["transactions"],
       country_codes: ["US"],
-      language: "en",
-      webhook: props.getProperty("WEBHOOK_URL"),
-      link_customization_name: "default"
+      language: "en"
     });
     
     Debug.log("generateProdLinkToken", "Link token generated.");
