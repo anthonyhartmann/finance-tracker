@@ -252,28 +252,27 @@ function generateProdLinkToken() {
     Debug.log("generateProdLinkToken", "User ID: " + userId);
     props.setProperty("PLAID_USER_ID", userId);
     
-    // Step 2: Create link token (minimal config)
+    // Step 2: Create Hosted Link token
     var data = PLAID._post("/link/token/create", {
       client_name: "Finance Tracker",
       user_id: userId,
       enable_multi_item_link: true,
       products: ["transactions"],
       country_codes: ["US"],
-      language: "en"
+      language: "en",
+      hosted_link: {}
     });
     
-    Debug.log("generateProdLinkToken", "Link token generated.");
+    var hostedLinkUrl = data.hosted_link.url;
+    Debug.log("generateProdLinkToken", "Hosted Link URL generated.");
     Debug.log("generateProdLinkToken", "Token: " + data.link_token);
     PropertiesService.getScriptProperties().setProperty("LAST_LINK_TOKEN", data.link_token);
-    Debug.log("generateProdLinkToken", "Saved to ScriptProperties for exchangeProdPublicToken().");
+    Debug.log("generateProdLinkToken", "Saved for exchangeProdPublicToken().");
     Debug.log("generateProdLinkToken", "");
-    Debug.log("generateProdLinkToken", "=== ACTION REQUIRED ===");
-    Debug.log("generateProdLinkToken", "Open this URL in a browser:");
-    Debug.log("generateProdLinkToken", "Open this URL in a browser:");
-    Debug.log("generateProdLinkToken", "https://cdn.plaid.com/link/v2/stable/link.html?key=" + clientId + "&token=" + data.link_token);
-    Debug.log("generateProdLinkToken", "Log into your bank and grant access.");
-    Debug.log("generateProdLinkToken", "After authorizing, switch back here and run exchangeProdPublicToken().");
-    Debug.log("generateProdLinkToken", "(No need to copy anything — I will check the link token status via API)");
+    Debug.log("generateProdLinkToken", "=== OPEN THIS URL IN YOUR BROWSER ===");
+    Debug.log("generateProdLinkToken", hostedLinkUrl);
+    Debug.log("generateProdLinkToken", "Connect all 4 banks, then close the tab.");
+    Debug.log("generateProdLinkToken", "Then run exchangeProdPublicToken() to collect the tokens.");
   } catch (err) {
     Debug.error("generateProdLinkToken", err);
   }
