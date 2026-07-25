@@ -46,7 +46,8 @@ const DASHBOARD = {
     sheet.getRange("A7").setFontWeight("bold");
     sheet.getRange("A15").setFontWeight("bold");
     
-    sheet.getRange("B4:B5").setNumberFormat("0");
+    sheet.getRange("B5").setNumberFormat("0");
+    sheet.getRange("B4").setNumberFormat("@");
     sheet.getRange("B8:B13").setNumberFormat("#,##0");
     sheet.getRange("B16").setNumberFormat("#,##0");
     
