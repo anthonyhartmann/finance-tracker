@@ -1,0 +1,111 @@
+/**
+ * Webhook.gs — Receives Plaid webhooks and triggers sync
+ * 
+ * Deploy this as a web app so Plaid can POST to it.
+ * The URL will be: https://script.google.com/macros/s/{SCRIPT_ID}/exec
+ */
+
+/**
+ * Handle incoming POST from Plaid webhook.
+ * Plaid sends SYNC_UPDATES_AVAILABLE when new transaction data is ready.
+ */
+function doPost(e) {
+  Debug.ensureTab();
+  
+  if (!e || !e.postData) {
+    Debug.log("doPost", "No POST data received");
+    return ContentService.createTextOutput(JSON.stringify({ error: "no data" }))
+      .setMimeType(ContentService.MimeType.JSON);
+  }
+  
+  try {
+    var data = JSON.parse(e.postData.contents);
+    Debug.logRaw("doPost", data);
+    
+    var webhookType = data.webhook_type;
+    var webhookCode = data.webhook_code;
+    var itemId = data.item_id;
+    
+    Debug.log("doPost", "Webhook received: " + webhookType + " / " + webhookCode + " for item: " + itemId);
+    
+    if (webhookType === "TRANSACTIONS" && webhookCode === "SYNC_UPDATES_AVAILABLE") {
+      // Find which Item this is and trigger sync
+      var itemName = findItemNameByItemId(itemId);
+      if (itemName) {
+        Debug.log("doPost", "Triggering sync for: " + itemName);
+        var transactions = PLAID.syncTransactions(itemName);
+        SHEET.writeTransactions(transactions);
+        
+        // Also refresh balances
+        var balances = PLAID.fetchBalances(itemName);
+        SHEET.writeBalances(balances);
+        
+        Debug.log("doPost", "Sync complete: " + transactions.length + " new transactions");
+      } else {
+        Debug.log("doPost", "Unknown item_id: " + itemId + " — skipping");
+      }
+    }
+    
+    // Return 200 to acknowledge receipt
+    return ContentService.createTextOutput(JSON.stringify({ status: "ok" }))
+      .setMimeType(ContentService.MimeType.JSON);
+    
+  } catch (err) {
+    Debug.error("doPost", err);
+    return ContentService.createTextOutput(JSON.stringify({ error: err.message }))
+      .setMimeType(ContentService.MimeType.JSON);
+  }
+}
+
+/**
+ * Handle GET requests (just for testing).
+ */
+function doGet() {
+  return ContentService.createTextOutput("Webhook endpoint is live. POST only.")
+    .setMimeType(ContentService.MimeType.TEXT);
+}
+
+/**
+ * Find the local item name by Plaid's item_id.
+ * Checks all stored access_tokens.
+ */
+function findItemNameByItemId(itemId) {
+  var props = PropertiesService.getScriptProperties();
+  var allKeys = props.getKeys();
+  
+  for (var i = 0; i < allKeys.length; i++) {
+    if (allKeys[i].indexOf("ACCESS_TOKEN_") === 0) {
+      var itemName = allKeys[i].replace("ACCESS_TOKEN_", "");
+      // We can't reverse-lookup item_id from access_token without an API call
+      // For now, log and return first match as fallback
+      Debug.log("findItemNameByItemId", "Found token for: " + itemName);
+    }
+  }
+  
+  // Fallback: try to get item info for all known items
+  var items = ["platypus", "platypus2", "platypus3"];
+  for (var j = 0; j < items.length; j++) {
+    try {
+      var token = PLAID.getAccessToken(items[j]);
+      if (token) {
+        var data = PLAID._post("/item/get", { access_token: token });
+        if (data.item && data.item.item_id === itemId) {
+          return items[j];
+        }
+      }
+    } catch (e) {
+      // skip
+    }
+  }
+  
+  return null;
+}
+
+/**
+ * Deploy helper: run this to get the web app URL you need to paste into Plaid.
+ */
+function getWebhookUrl() {
+  var url = ScriptApp.getService().getUrl();
+  Debug.log("getWebhookUrl", "Web app URL: " + url);
+  return url;
+}
