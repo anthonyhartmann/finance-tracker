@@ -119,45 +119,76 @@ function testPlaidConnection() {
 }
 
 /**
- * Link a sandbox account (First Platypus Bank) and store the access_token.
- * Run this once before testSyncSingleAccount().
+ * Link multiple sandbox accounts for testing.
+ * Creates: Platypus Bank (checking/savings), Second Platypus (credit), Third Platypus (credit)
+ * Run this once before testMultiAccountSync().
  */
-function linkSandboxAccount() {
-  Debug.log("linkSandboxAccount", "=== Starting sandbox account link ===");
+function linkAllSandboxAccounts() {
+  Debug.log("linkAllSandboxAccounts", "=== Linking all sandbox accounts ===");
   
-  var publicToken = PLAID.sandboxCreatePublicToken();
-  var accessToken = PLAID.exchangePublicToken(publicToken);
-  PLAID.storeAccessToken("platypus", accessToken);
+  var accounts = [
+    { name: "platypus", institution: "ins_109508", desc: "First Platypus (checking + savings)" },
+    { name: "platypus2", institution: "ins_109509", desc: "Second Platypus (credit card)" },
+    { name: "platypus3", institution: "ins_109510", desc: "Third Platypus (credit card)" },
+  ];
   
-  var accounts = PLAID.getAccounts("platypus");
+  for (var i = 0; i < accounts.length; i++) {
+    var acct = accounts[i];
+    if (PLAID.getAccessToken(acct.name)) {
+      Debug.log("linkAllSandboxAccounts", "Already linked: " + acct.name + " — " + acct.desc);
+      continue;
+    }
+    
+    Debug.log("linkAllSandboxAccounts", "Linking: " + acct.name + " — " + acct.desc);
+    
+    var data = PLAID._post("/sandbox/public_token/create", {
+      institution_id: acct.institution,
+      initial_products: ["transactions"],
+    });
+    
+    var accessToken = PLAID.exchangePublicToken(data.public_token);
+    PLAID.storeAccessToken(acct.name, accessToken);
+  }
   
-  Debug.log("linkSandboxAccount", "[OK] Sandbox account linked and ready for sync.");
+  Debug.log("linkAllSandboxAccounts", "[OK] All sandbox accounts linked.");
 }
 
 /**
- * Sync transactions for the linked sandbox account and write to sheet.
+ * Sync transactions AND balances for all linked sandbox accounts.
+ * Writes to the transactions tab and dashboard.
  */
-function testSyncSingleAccount() {
-  Debug.log("testSyncSingleAccount", "=== Starting single account sync test ===");
+function testMultiAccountSync() {
+  Debug.log("testMultiAccountSync", "=== Starting multi-account sync test ===");
   
-  var accessToken = PLAID.getAccessToken("platypus");
-  if (!accessToken) {
-    Debug.error("testSyncSingleAccount", "No access token. Run linkSandboxAccount() first.");
-    return;
+  var itemNames = ["platypus", "platypus2", "platypus3"];
+  var totalTransactions = 0;
+  var allBalances = [];
+  
+  for (var i = 0; i < itemNames.length; i++) {
+    var name = itemNames[i];
+    var token = PLAID.getAccessToken(name);
+    
+    if (!token) {
+      Debug.log("testMultiAccountSync", "Skipping " + name + " — not linked yet");
+      continue;
+    }
+    
+    Debug.log("testMultiAccountSync", "Syncing: " + name);
+    
+    // Sync transactions
+    var transactions = PLAID.syncTransactions(name);
+    SHEET.writeTransactions(transactions);
+    totalTransactions += transactions.length;
+    
+    // Fetch balances
+    var balances = PLAID.fetchBalances(name);
+    allBalances = allBalances.concat(balances);
   }
   
-  var headers = [
-    "transaction_id", "account_id", "date", "name", "merchant_name",
-    "amount", "category", "payment_channel", "pending", "currency", "synced_at"
-  ];
-  SHEET.ensureTab("transactions", headers);
+  // Write aggregate balances to dashboard
+  SHEET.writeBalances(allBalances);
   
-  var transactions = PLAID.syncTransactions("platypus");
-  Debug.log("testSyncSingleAccount", "Got " + transactions.length + " transactions from Plaid");
-  
-  SHEET.writeTransactions(transactions);
-  
-  var balances = PLAID.fetchBalances("platypus");
-  
-  Debug.log("testSyncSingleAccount", "[OK] Sync test complete. " + transactions.length + " transactions written.");
+  Debug.log("testMultiAccountSync", "[OK] Multi-account sync complete.");
+  Debug.log("testMultiAccountSync", "Total transactions: " + totalTransactions);
 }
+
