@@ -32,9 +32,13 @@ const Debug = {
   log: function (fn, message) {
     const sheet = this.ensureTab();
     const timestamp = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "yyyy-MM-dd HH:mm:ss");
-    sheet.appendRow([timestamp, fn, message]);
-    // Also log to StackDriver for Apps Script's built-in logger
-    console.log(`[${fn}] ${message}`);
+    // Strip leading = to prevent Sheets from interpreting as formula
+    var safeMessage = String(message);
+    while (safeMessage.indexOf("=") === 0) {
+      safeMessage = safeMessage.substring(1);
+    }
+    sheet.appendRow([timestamp, fn, safeMessage]);
+    console.log("[" + fn + "] " + message);
   },
 
   /**
