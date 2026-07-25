@@ -43,19 +43,18 @@ function doPost(e) {
     
     Debug.log("doPost", "Webhook received: " + webhookType + " / " + webhookCode + " for item: " + itemId);
     
-    if (webhookType === "TRANSACTIONS" && webhookCode === "SYNC_UPDATES_AVAILABLE") {
-      // Find which Item this is and trigger sync
+    var SYNC_CODES = ["SYNC_UPDATES_AVAILABLE", "INITIAL_UPDATE", "HISTORICAL_UPDATE", "DEFAULT_UPDATE"];
+    if (webhookType === "TRANSACTIONS" && SYNC_CODES.indexOf(webhookCode) >= 0) {
+      // Find which Item this is and trigger an incremental sync
       var itemName = findItemNameByItemId(itemId);
       if (itemName) {
-        Debug.log("doPost", "Triggering sync for: " + itemName);
-        var transactions = PLAID.syncTransactions(itemName);
-        SHEET.writeTransactions(transactions);
-        
-        // Also refresh balances
-        var balances = PLAID.fetchBalances(itemName);
-        SHEET.writeBalances(balances);
-        
-        Debug.log("doPost", "Sync complete: " + transactions.length + " new transactions");
+        Debug.log("doPost", "Triggering sync for: " + itemName + " (" + webhookCode + ")");
+        var result = PLAID.syncTransactions(itemName);
+        SHEET.writeTransactions(result);
+        Debug.log("doPost", "Sync applied for " + itemName + ": " + result.added.length + " new, " + result.modified.length + " updated, " + result.removed.length + " removed");
+
+        // Refresh aggregate balances across ALL linked accounts
+        refreshAllBalances();
       } else {
         Debug.log("doPost", "Unknown item_id: " + itemId + " — skipping");
       }
@@ -113,34 +112,36 @@ function doGet(e) {
  * Checks all stored access_tokens.
  */
 function findItemNameByItemId(itemId) {
+  if (!itemId) return null;
   var props = PropertiesService.getScriptProperties();
-  var allKeys = props.getKeys();
-  
-  for (var i = 0; i < allKeys.length; i++) {
-    if (allKeys[i].indexOf("ACCESS_TOKEN_") === 0) {
-      var itemName = allKeys[i].replace("ACCESS_TOKEN_", "");
-      // We can't reverse-lookup item_id from access_token without an API call
-      // For now, log and return first match as fallback
-      Debug.log("findItemNameByItemId", "Found token for: " + itemName);
-    }
+
+  // Cached mapping (set on first successful lookup)
+  var cached = props.getProperty("ITEMID_" + itemId);
+  if (cached) {
+    Debug.log("findItemNameByItemId", "Cache hit: " + itemId + " -> " + cached);
+    return cached;
   }
-  
-  // Fallback: try to get item info for all known items
-  var items = ["platypus", "platypus2", "platypus3"];
-  for (var j = 0; j < items.length; j++) {
-    try {
-      var token = PLAID.getAccessToken(items[j]);
-      if (token) {
-        var data = PLAID._post("/item/get", { access_token: token });
-        if (data.item && data.item.item_id === itemId) {
-          return items[j];
+
+  // Look up every linked item once; cache each item_id we see
+  var keys = props.getKeys();
+  for (var i = 0; i < keys.length; i++) {
+    if (keys[i].indexOf("ACCESS_TOKEN_") === 0) {
+      var itemName = keys[i].replace("ACCESS_TOKEN_", "");
+      try {
+        var data = PLAID._post("/item/get", { access_token: PLAID.getAccessToken(itemName) });
+        if (data.item && data.item.item_id) {
+          props.setProperty("ITEMID_" + data.item.item_id, itemName);
+          Debug.log("findItemNameByItemId", "Mapped " + data.item.item_id + " -> " + itemName);
+          if (data.item.item_id === itemId) {
+            return itemName;
+          }
         }
+      } catch (e) {
+        Debug.log("findItemNameByItemId", "item/get failed for " + itemName + " (skipping): " + e.message);
       }
-    } catch (e) {
-      // skip
     }
   }
-  
+
   return null;
 }
 
@@ -162,22 +163,51 @@ function configureWebhook() {
   PropertiesService.getScriptProperties().setProperty("WEBHOOK_URL", url);
   Debug.log("configureWebhook", "Webhook URL stored: " + url);
   
-  // Update webhook for all existing sandbox items
-  var items = ["platypus", "platypus2", "platypus3"];
-  for (var i = 0; i < items.length; i++) {
-    var token = PLAID.getAccessToken(items[i]);
-    if (token) {
-      try {
-        var data = PLAID._post("/item/webhook/update", {
-          access_token: token,
-          webhook: url
-        });
-        Debug.log("configureWebhook", "Updated webhook for: " + items[i]);
-      } catch (e) {
-        Debug.error("configureWebhook", "Failed for " + items[i] + ": " + e.message);
+  // Update webhook for ALL linked items (whatever ACCESS_TOKEN_* keys exist)
+  var props = PropertiesService.getScriptProperties();
+  var keys = props.getKeys();
+  var updated = 0;
+  for (var i = 0; i < keys.length; i++) {
+    if (keys[i].indexOf("ACCESS_TOKEN_") === 0) {
+      var itemName = keys[i].replace("ACCESS_TOKEN_", "");
+      var token = PLAID.getAccessToken(itemName);
+      if (token) {
+        try {
+          PLAID._post("/item/webhook/update", {
+            access_token: token,
+            webhook: url
+          });
+          Debug.log("configureWebhook", "Updated webhook for: " + itemName);
+          updated++;
+        } catch (e) {
+          Debug.error("configureWebhook", "Failed for " + itemName + ": " + e.message);
+        }
       }
     }
   }
-  
-  Debug.log("configureWebhook", "[OK] Webhook configured for all items.");
+
+  Debug.log("configureWebhook", "[OK] Webhook configured for " + updated + " item(s).");
+}
+
+/**
+ * Fetch balances for every linked account and write ONE aggregate total
+ * to the dashboard. Called after webhook-driven syncs.
+ */
+function refreshAllBalances() {
+  var props = PropertiesService.getScriptProperties();
+  var keys = props.getKeys();
+  var all = [];
+  for (var i = 0; i < keys.length; i++) {
+    if (keys[i].indexOf("ACCESS_TOKEN_") === 0) {
+      var itemName = keys[i].replace("ACCESS_TOKEN_", "");
+      try {
+        all = all.concat(PLAID.fetchBalances(itemName));
+      } catch (e) {
+        Debug.log("refreshAllBalances", "Balance fetch failed for " + itemName + " (skipping): " + e.message);
+      }
+    }
+  }
+  if (all.length > 0) {
+    SHEET.writeBalances(all);
+  }
 }

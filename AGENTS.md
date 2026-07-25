@@ -59,7 +59,7 @@ Personal finance tracker synced from bank accounts (via Plaid) + interview incom
 | I5 Dashboard | ✅ | 3 numbers (Spend, Net Income, Daily Budget) + month selector |
 | I6 Calendar | □ | Interview income from Calendar |
 | I7 Manual Adj | □ | Adjustments, overrides, no-shows |
-| I8 Production | 🟡 **FIX DEPLOYED** | Root cause found — see below; awaiting user test |
+| I8 Production | ✅ | Hosted Link works; 4 banks linked (ally, discover, bofa, chase) |
 | I9 Polish | □ | Ignore rules, error emails, monthly summaries |
 
 ## Key Functions (Run from Apps Script Editor)
@@ -74,13 +74,31 @@ Personal finance tracker synced from bank accounts (via Plaid) + interview incom
 - `configureWebhook()` — set webhook URL on sandbox items
 - `setupPlaidProduction()` — stored production keys
 
-### For Production (I8)
+### For Production (I8) — done
 - `generateProdLinkToken()` — creates link token + user for Multi-Item Link; logs Hosted Link URL
 - `exchangeProdPublicToken()` — retrieves tokens after a Hosted Link session (via /link/token/get)
 - `exchangeProdPublicTokenManual()` — paste public_token(s) from the plaid-link.html fallback page
-- `syncAllProductionAccounts()` — syncs all linked production accounts
+- `syncAllProductionAccounts()` — incremental-syncs all linked accounts + one aggregate balance
+- `resetAndResync()` — wipe transactions tab + cursors + sandbox tokens, rebuild from SYNC_START_DATE
+- `configureWebhook()` — points ALL linked items' webhooks at the Apps Script URL (dynamic)
 
-## I8 — ROOT CAUSE FOUND, FIX DEPLOYED (awaiting user test)
+### Sync model (as of 2026-07-25)
+- `PLAID.SYNC_START_DATE = "2026-07-01"` (Plaid.gs) — only transactions on/after this date
+  are written. Plaid has NO server-side date limit; initial sync walks ALL history (up to
+  ~2 years), we filter client-side while advancing the cursor to the present.
+- `PLAID.syncTransactions()` returns `{ added, modified, removed }`; `SHEET.writeTransactions()`
+  applies all three (dedup by transaction_id, overwrite on modify, delete on remove) via one
+  batch rewrite. Pending→posted transitions stay correct.
+- After the initial walk, cursors sit at the live frontier: every later sync is a tiny delta.
+- **Webhooks drive future updates:** Plaid POSTs TRANSACTIONS/SYNC_UPDATES_AVAILABLE → `doPost()`
+  → maps item_id (cached as ITEMID_* props) → incremental sync → aggregate balance refresh.
+- **Web app redeploy required after Webhook.gs changes:** the /exec URL runs a FIXED version.
+  `clasp deploy -i AKfycbxYszvhe8-v7YZaF78oRzVCR6JBbIUITtbjKEI8vdYk-BdXsRctAEOmcruzFXv2RQ2S -d "desc"`
+  redeploys in place (URL unchanged). Current deployment: @3.
+- Multi-Item Link caveat: connect ALL banks in the Hosted Link session BEFORE running
+  `exchangeProdPublicToken()` — it consumes and deletes the stored link token.
+
+## I8 — RESOLVED ✅ (root cause + fix, for the record)
 
 ### Root Cause
 `https://cdn.plaid.com/link/v2/stable/link.html` is **not a launchable page** — it's the inner
@@ -119,7 +137,7 @@ Tabs and their gids:
 |---|---|
 | Sheet1 | 0 |
 | debug | 711367457 |
-| transactions | 766890938 |
+| transactions | ⚠️ changes whenever `resetAndResync()` recreates the tab — always read by NAME |
 | dashboard | 2006033775 |
 
 ## Dev Workflow

@@ -7,6 +7,13 @@
 
 const PLAID = {
   /**
+   * Earliest transaction date to keep (YYYY-MM-DD). Older history is still
+   * walked (to advance the sync cursor to the present) but never written
+   * to the Sheet. Change this to widen/narrow the history window.
+   */
+  SYNC_START_DATE: "2026-07-01",
+
+  /**
    * Get the base URL for the current environment.
    */
   _baseUrl: function () {
@@ -114,42 +121,61 @@ const PLAID = {
   /**
    * Fetch transactions via /transactions/sync.
    * Stores cursor in ScriptProperties for incremental syncs.
+   * Returns { added, modified, removed } filtered to SYNC_START_DATE or later.
+   * (removed entries are always passed through — they only delete matching rows.)
    */
   syncTransactions: function (itemName) {
-    Debug.log("Plaid.syncTransactions", "Starting sync for: " + itemName);
-    
+    Debug.log("Plaid.syncTransactions", "Starting sync for: " + itemName + " (keeping " + this.SYNC_START_DATE + " and later)");
+
     const accessToken = this.getAccessToken(itemName);
     if (!accessToken) {
-      Debug.error("Plaid.syncTransactions", "No access_token for " + itemName + ". Run linkSandboxAccount() first.");
-      return [];
+      Debug.error("Plaid.syncTransactions", "No access_token for " + itemName + ". Link it first.");
+      return { added: [], modified: [], removed: [] };
     }
-    
+
     const props = PropertiesService.getScriptProperties();
     const cursorKey = "CURSOR_" + itemName;
     let cursor = props.getProperty(cursorKey) || "";
-    
-    let allTransactions = [];
+    const startDate = this.SYNC_START_DATE;
+
+    var result = { added: [], modified: [], removed: [] };
+    var skippedOld = 0;
     let hasMore = true;
-    
+
     while (hasMore) {
-      const payload = { access_token: accessToken };
+      const payload = { access_token: accessToken, count: 500 };
       if (cursor) payload.cursor = cursor;
-      
+
       const data = this._post("/transactions/sync", payload);
-      
-      if (data.added) {
-        allTransactions = allTransactions.concat(data.added);
+
+      var batchAdded = data.added || [];
+      var batchModified = data.modified || [];
+      var batchRemoved = data.removed || [];
+      var kept = 0;
+
+      for (var i = 0; i < batchAdded.length; i++) {
+        var d = batchAdded[i].authorized_date || batchAdded[i].date || "";
+        if (!d || d >= startDate) { result.added.push(batchAdded[i]); kept++; }
+        else { skippedOld++; }
       }
-      
+      for (var m = 0; m < batchModified.length; m++) {
+        var md = batchModified[m].authorized_date || batchModified[m].date || "";
+        if (!md || md >= startDate) { result.modified.push(batchModified[m]); }
+        else { skippedOld++; }
+      }
+      for (var r = 0; r < batchRemoved.length; r++) {
+        result.removed.push(batchRemoved[r]);
+      }
+
       cursor = data.next_cursor || "";
       props.setProperty(cursorKey, cursor);
       hasMore = data.has_more || false;
-      
-      Debug.log("Plaid.syncTransactions", "Fetched batch: " + (data.added ? data.added.length : 0) + " added, has_more=" + hasMore);
+
+      Debug.log("Plaid.syncTransactions", "Page: " + batchAdded.length + " fetched, " + kept + " kept, has_more=" + hasMore);
     }
-    
-    Debug.log("Plaid.syncTransactions", "Sync complete. Total transactions: " + allTransactions.length);
-    return allTransactions;
+
+    Debug.log("Plaid.syncTransactions", "Sync complete for " + itemName + ": " + result.added.length + " new, " + result.modified.length + " updated, " + result.removed.length + " removed (" + skippedOld + " old skipped, before " + startDate + ")");
+    return result;
   },
   
   /**
