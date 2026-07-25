@@ -19,7 +19,7 @@ const Debug = {
     let sheet = ss.getSheetByName(this.SHEET_NAME);
     if (!sheet) {
       sheet = ss.insertSheet(this.SHEET_NAME);
-      sheet.setHidden(true);
+      sheet.hideSheet();
       sheet.appendRow(["timestamp", "function", "message"]);
       sheet.setFrozenRows(1);
     }
