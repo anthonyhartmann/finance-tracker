@@ -58,6 +58,58 @@ const DASHBOARD = {
     this.refresh();
   },
   /**
+   * Refresh all dashboard values.
+   */
+  refresh: function () {
+    var ss = SpreadsheetApp.getActiveSpreadsheet();
+    var sheet = ss.getSheetByName(this.TAB);
+    if (!sheet) {
+      this.init();
+      sheet = ss.getSheetByName(this.TAB);
+    }
+    
+    var month = sheet.getRange("B4").getValue();
+    var target = Number(sheet.getRange("B5").getValue()) || 4000;
+    
+    if (!month || typeof month !== "string" || month.indexOf("-") === -1) {
+      Debug.log("Dashboard.refresh", "Invalid month format in B4. Use YYYY-MM.");
+      return;
+    }
+    
+    var parts = month.split("-");
+    var year = parseInt(parts[0]);
+    var monthNum = parseInt(parts[1]);
+    
+    var monthStart = new Date(year, monthNum - 1, 1);
+    var monthEnd = new Date(year, monthNum, 0);
+    var today = new Date();
+    var daysRemaining = Math.max(0, Math.ceil((monthEnd.getTime() - today.getTime()) / (1000 * 60 * 60 * 24)));
+    
+    var startStr = Utilities.formatDate(monthStart, Session.getScriptTimeZone(), "yyyy-MM-dd");
+    var endStr = Utilities.formatDate(monthEnd, Session.getScriptTimeZone(), "yyyy-MM-dd");
+    
+    Debug.log("Dashboard.refresh", "Calculating for: " + startStr + " to " + endStr);
+    
+    var spend = this.calculateSpend(startStr, endStr);
+    sheet.getRange("B8").setValue(spend);
+    
+    var interviewIncome = this.calculateInterviewIncome(startStr, endStr);
+    sheet.getRange("B9").setValue(interviewIncome);
+    
+    var manualAdjustments = this.calculateManualAdjustments(startStr, endStr);
+    sheet.getRange("B10").setValue(manualAdjustments);
+    
+    var netIncome = 9000 + interviewIncome + manualAdjustments - spend;
+    sheet.getRange("B11").setValue(netIncome);
+    
+    var dailyBudget = daysRemaining > 0 ? (netIncome - target) / daysRemaining : 0;
+    sheet.getRange("B13").setValue(Math.round(dailyBudget));
+    sheet.getRange("C13").setValue("Target: $" + target + ", " + daysRemaining + " days left");
+    
+    Debug.log("Dashboard.refresh", "Spend: $" + spend + " | Net: $" + netIncome + " | Daily: $" + Math.round(dailyBudget));
+  },
+
+  /**
    * Calculate total spend for a month from the transactions tab.
    * Excludes transfers between own accounts.
    */
