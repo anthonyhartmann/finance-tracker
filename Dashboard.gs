@@ -166,7 +166,8 @@ const DASHBOARD = {
   },
   
   /**
-   * Calculate interview income. Returns 0 until Calendar parser is built.
+   * Calculate interview income from the interview_income tab.
+   * Reads columns by header name and filters to the given date range.
    */
   calculateInterviewIncome: function (startDate, endDate) {
     var ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -174,9 +175,31 @@ const DASHBOARD = {
     if (!sheet) return 0;
     
     var data = sheet.getDataRange().getValues();
+    if (data.length < 2) return 0;
+    
+    var header = [];
+    for (var h = 0; h < data[0].length; h++) header.push(String(data[0][h]));
+    var dateCol = header.indexOf("date");
+    var amountCol = header.indexOf("amount");
+    if (dateCol < 0 || amountCol < 0) {
+      Debug.error("Dashboard.calculateInterviewIncome", "interview_income tab missing date/amount columns");
+      return 0;
+    }
+    
     var total = 0;
     for (var r = 1; r < data.length; r++) {
-      total += Number(data[r][4]) || 0;
+      var rawDate = data[r][dateCol];
+      var amount = Number(data[r][amountCol]) || 0;
+      
+      var date = "";
+      if (rawDate instanceof Date) {
+        date = Utilities.formatDate(rawDate, Session.getScriptTimeZone(), "yyyy-MM-dd");
+      } else {
+        date = String(rawDate || "");
+      }
+      
+      if (date < startDate || date > endDate) continue;
+      total += amount;
     }
     return total;
   },
