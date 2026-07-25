@@ -117,3 +117,47 @@ function testPlaidConnection() {
   
   Debug.log("testPlaidConnection", "=== Plaid connection test complete ===");
 }
+
+/**
+ * Link a sandbox account (First Platypus Bank) and store the access_token.
+ * Run this once before testSyncSingleAccount().
+ */
+function linkSandboxAccount() {
+  Debug.log("linkSandboxAccount", "=== Starting sandbox account link ===");
+  
+  var publicToken = PLAID.sandboxCreatePublicToken();
+  var accessToken = PLAID.exchangePublicToken(publicToken);
+  PLAID.storeAccessToken("platypus", accessToken);
+  
+  var accounts = PLAID.getAccounts("platypus");
+  
+  Debug.log("linkSandboxAccount", "[OK] Sandbox account linked and ready for sync.");
+}
+
+/**
+ * Sync transactions for the linked sandbox account and write to sheet.
+ */
+function testSyncSingleAccount() {
+  Debug.log("testSyncSingleAccount", "=== Starting single account sync test ===");
+  
+  var accessToken = PLAID.getAccessToken("platypus");
+  if (!accessToken) {
+    Debug.error("testSyncSingleAccount", "No access token. Run linkSandboxAccount() first.");
+    return;
+  }
+  
+  var headers = [
+    "transaction_id", "account_id", "date", "name", "merchant_name",
+    "amount", "category", "payment_channel", "pending", "currency", "synced_at"
+  ];
+  SHEET.ensureTab("transactions", headers);
+  
+  var transactions = PLAID.syncTransactions("platypus");
+  Debug.log("testSyncSingleAccount", "Got " + transactions.length + " transactions from Plaid");
+  
+  SHEET.writeTransactions(transactions);
+  
+  var balances = PLAID.fetchBalances("platypus");
+  
+  Debug.log("testSyncSingleAccount", "[OK] Sync test complete. " + transactions.length + " transactions written.");
+}
