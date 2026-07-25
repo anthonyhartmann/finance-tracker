@@ -250,8 +250,7 @@ function generateProdLinkToken() {
       country_codes: ["US"],
       language: "en",
       webhook: PropertiesService.getScriptProperties().getProperty("WEBHOOK_URL"),
-      link_customization_name: "default",
-      redirect_uri: PropertiesService.getScriptProperties().getProperty("WEBHOOK_URL")
+      link_customization_name: "default"
     });
     
     Debug.log("generateProdLinkToken", "Link token generated.");
@@ -262,7 +261,8 @@ function generateProdLinkToken() {
     Debug.log("generateProdLinkToken", "Open this URL in a browser:");
     Debug.log("generateProdLinkToken", "https://cdn.plaid.com/link/v2/stable/link.html?key=" + clientId + "&token=" + data.link_token);
     Debug.log("generateProdLinkToken", "Log into your bank and grant access.");
-    Debug.log("generateProdLinkToken", "When done, run exchangeProdPublicToken() with the public_token from the redirect URL.");
+    Debug.log("generateProdLinkToken", "After authorizing, look for the public_token on the success page.");
+    Debug.log("generateProdLinkToken", "Copy that value and run exchangeProdPublicToken() to paste it.");
   } catch (err) {
     Debug.error("generateProdLinkToken", err);
   }
