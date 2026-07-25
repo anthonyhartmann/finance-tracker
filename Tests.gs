@@ -252,25 +252,23 @@ function generateProdLinkToken() {
     Debug.log("generateProdLinkToken", "User ID: " + userId);
     props.setProperty("PLAID_USER_ID", userId);
     
-    // Step 2: Create Hosted Link token
+    // Step 2: Create link token (standard)
     var data = PLAID._post("/link/token/create", {
       client_name: "Finance Tracker",
       user_id: userId,
       enable_multi_item_link: true,
       products: ["transactions"],
       country_codes: ["US"],
-      language: "en",
-      hosted_link: {}
+      language: "en"
     });
     
-    var hostedLinkUrl = data.hosted_link.url;
-    Debug.log("generateProdLinkToken", "Hosted Link URL generated.");
+    Debug.log("generateProdLinkToken", "Link token generated.");
     Debug.log("generateProdLinkToken", "Token: " + data.link_token);
     PropertiesService.getScriptProperties().setProperty("LAST_LINK_TOKEN", data.link_token);
-    Debug.log("generateProdLinkToken", "Saved for exchangeProdPublicToken().");
     Debug.log("generateProdLinkToken", "");
     Debug.log("generateProdLinkToken", "=== OPEN THIS URL IN YOUR BROWSER ===");
-    Debug.log("generateProdLinkToken", hostedLinkUrl);
+    var linkUrl = "https://cdn.plaid.com/link/v2/stable/link.html?token=" + data.link_token;
+    Debug.log("generateProdLinkToken", linkUrl);
     Debug.log("generateProdLinkToken", "Connect all 4 banks, then close the tab.");
     Debug.log("generateProdLinkToken", "Then run exchangeProdPublicToken() to collect the tokens.");
   } catch (err) {
