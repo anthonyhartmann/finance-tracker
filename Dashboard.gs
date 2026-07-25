@@ -123,20 +123,25 @@ const DASHBOARD = {
     var total = 0;
     
     // Headers: transaction_id, account_id, date, name, merchant_name, amount, category, payment_channel, pending, currency, synced_at
+    Debug.log("Dashboard.calculateSpend", "Data rows: " + (data.length - 1) + ", date range: " + startDate + " to " + endDate);
+    var matchedDate = 0, matchedCategory = 0, matchedAmount = 0;
     for (var r = 1; r < data.length; r++) {
       var date = String(data[r][2] || "");
       var amount = Number(data[r][5]) || 0;
       var category = String(data[r][6] || "");
       
       if (date < startDate || date > endDate) continue;
+      matchedDate++;
       
       // Skip transfers (Plaid categories: TRANSFER, LOAN_PAYMENTS)
-      if (category === "TRANSFER" || category === "LOAN_PAYMENTS") continue;
+      if (category === "TRANSFER" || category === "LOAN_PAYMENTS") { matchedCategory++; continue; }
       
       if (amount > 0) {
         total += amount;
+        matchedAmount++;
       }
     }
+    Debug.log("Dashboard.calculateSpend", "Matched: " + matchedDate + " in date range, " + matchedCategory + " skipped as transfers, " + matchedAmount + " with positive amount");
     
     return total;
   },
