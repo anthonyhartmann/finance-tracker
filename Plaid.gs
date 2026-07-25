@@ -6,7 +6,16 @@
  */
 
 const PLAID = {
-  BASE_URL: "https://sandbox.plaid.com",
+  /**
+   * Get the base URL for the current environment.
+   */
+  _baseUrl: function () {
+    var env = PropertiesService.getScriptProperties().getProperty("PLAID_ENVIRONMENT") || "sandbox";
+    if (env === "production") {
+      return "https://production.plaid.com";
+    }
+    return "https://sandbox.plaid.com";
+  },
   
   /**
    * Get credentials from ScriptProperties.
@@ -36,7 +45,7 @@ const PLAID = {
       muteHttpExceptions: true,
     };
     
-    const url = this.BASE_URL + endpoint;
+    const url = this._baseUrl() + endpoint;
     Debug.log("Plaid._post", "POST " + url);
     
     const response = UrlFetchApp.fetch(url, options);

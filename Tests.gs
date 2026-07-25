@@ -192,3 +192,131 @@ function testMultiAccountSync() {
   Debug.log("testMultiAccountSync", "Total transactions: " + totalTransactions);
 }
 
+/**
+ * Switch Plaid to production mode and store Trial plan API keys.
+ * Run this BEFORE generateProdLinkToken().
+ */
+function setupPlaidProduction() {
+  var ui = SpreadsheetApp.getUi();
+  
+  var result = ui.alert(
+    "Production Setup",
+    "This will switch from Sandbox to Production. You need your Trial plan "
+    + "client_id and secret from dashboard.plaid.com. Continue?",
+    ui.ButtonSet.OK_CANCEL
+  );
+  if (result !== ui.Button.OK) return;
+  
+  var clientId = ui.prompt("Production Client ID:", ui.ButtonSet.OK_CANCEL);
+  if (clientId.getSelectedButton() !== ui.Button.OK) return;
+  
+  var secret = ui.prompt("Production Secret:", ui.ButtonSet.OK_CANCEL);
+  if (secret.getSelectedButton() !== ui.Button.OK) return;
+  
+  var props = PropertiesService.getScriptProperties();
+  props.setProperty("PLAID_CLIENT_ID", clientId.getResponseText());
+  props.setProperty("PLAID_SECRET", secret.getResponseText());
+  props.setProperty("PLAID_ENVIRONMENT", "production");
+  props.setProperty("WEBHOOK_URL", "https://script.google.com/macros/s/AKfycbxYszvhe8-v7YZaF78oRzVCR6JBbIUITtbjKEI8vdYk-BdXsRctAEOmcruzFXv2RQ2S/exec");
+  
+  Debug.log("setupPlaidProduction", "[OK] Switched to production. Generate link tokens below.");
+}
+
+/**
+ * Generate a Plaid Link token for a real bank connection.
+ * After running this, open the returned URL in a browser to connect your bank.
+ */
+function generateProdLinkToken() {
+  Debug.log("generateProdLinkToken", "Generating production link token...");
+  
+  var url = PLAID._baseUrl();
+  if (url.indexOf("sandbox") !== -1) {
+    Debug.error("generateProdLinkToken", "Still in sandbox mode. Run setupPlaidProduction() first.");
+    return;
+  }
+  
+  try {
+    var data = PLAID._post("/link/token/create", {
+      client_name: "Finance Tracker",
+      user: { client_user_id: "anthony-1" },
+      products: ["transactions"],
+      country_codes: ["US"],
+      language: "en",
+      webhook: PropertiesService.getScriptProperties().getProperty("WEBHOOK_URL"),
+      link_customization_name: "default",
+      redirect_uri: "https://script.google.com"
+    });
+    
+    Debug.log("generateProdLinkToken", "Link token generated.");
+    Debug.log("generateProdLinkToken", "Token: " + data.link_token);
+    Debug.log("generateProdLinkToken", "");
+    Debug.log("generateProdLinkToken", "=== ACTION REQUIRED ===");
+    Debug.log("generateProdLinkToken", "Open this URL in a browser:");
+    Debug.log("generateProdLinkToken", "https://plaid.com/link/?token=" + data.link_token);
+    Debug.log("generateProdLinkToken", "Log into your bank and grant access.");
+    Debug.log("generateProdLinkToken", "When done, run exchangeProdPublicToken() with the public_token from the redirect URL.");
+  } catch (err) {
+    Debug.error("generateProdLinkToken", err);
+  }
+}
+
+/**
+ * Exchange a production public_token from the Plaid Link redirect.
+ */
+function exchangeProdPublicToken() {
+  var ui = SpreadsheetApp.getUi();
+  
+  var result = ui.prompt(
+    "Public Token",
+    "Paste the public_token from the redirect URL:",
+    ui.ButtonSet.OK_CANCEL
+  );
+  if (result.getSelectedButton() !== ui.Button.OK) return;
+  
+  var publicToken = result.getResponseText().trim();
+  if (!publicToken) {
+    Debug.error("exchangeProdPublicToken", "No token provided.");
+    return;
+  }
+  
+  Debug.log("exchangeProdPublicToken", "Exchanging public_token...");
+  
+  try {
+    var accessToken = PLAID.exchangePublicToken(publicToken);
+    
+    var nameResult = ui.prompt(
+      "Account Name",
+      "Which account is this? (e.g. ally, bofa, chase, discover):",
+      ui.ButtonSet.OK_CANCEL
+    );
+    if (nameResult.getSelectedButton() !== ui.Button.OK) return;
+    
+    PLAID.storeAccessToken(nameResult.getResponseText().trim(), accessToken);
+    var accounts = PLAID.getAccounts(nameResult.getResponseText().trim());
+    
+    Debug.log("exchangeProdPublicToken", "[OK] " + nameResult.getResponseText().trim() + " linked.");
+  } catch (err) {
+    Debug.error("exchangeProdPublicToken", err);
+  }
+}
+
+/**
+ * Sync a single production account after linking.
+ */
+function syncProductionAccount(itemName) {
+  if (!itemName) {
+    itemName = SpreadsheetApp.getUi().prompt("Item Name:", SpreadsheetApp.getUi().ButtonSet.OK_CANCEL).getResponseText().trim();
+  }
+  
+  Debug.log("syncProductionAccount", "Syncing: " + itemName);
+  
+  var transactions = PLAID.syncTransactions(itemName);
+  SHEET.writeTransactions(transactions);
+  
+  var balances = PLAID.fetchBalances(itemName);
+  SHEET.writeBalances(balances);
+  
+  Debug.log("syncProductionAccount", "[OK] " + itemName + " synced: " + transactions.length + " transactions.");
+}
+
+
