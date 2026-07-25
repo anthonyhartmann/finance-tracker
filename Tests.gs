@@ -255,14 +255,16 @@ function generateProdLinkToken() {
     
     Debug.log("generateProdLinkToken", "Link token generated.");
     Debug.log("generateProdLinkToken", "Token: " + data.link_token);
+    PropertiesService.getScriptProperties().setProperty("LAST_LINK_TOKEN", data.link_token);
+    Debug.log("generateProdLinkToken", "Saved to ScriptProperties for exchangeProdPublicToken().");
     Debug.log("generateProdLinkToken", "");
     Debug.log("generateProdLinkToken", "=== ACTION REQUIRED ===");
     Debug.log("generateProdLinkToken", "Open this URL in a browser:");
     Debug.log("generateProdLinkToken", "Open this URL in a browser:");
     Debug.log("generateProdLinkToken", "https://cdn.plaid.com/link/v2/stable/link.html?key=" + clientId + "&token=" + data.link_token);
     Debug.log("generateProdLinkToken", "Log into your bank and grant access.");
-    Debug.log("generateProdLinkToken", "After authorizing, look for the public_token on the success page.");
-    Debug.log("generateProdLinkToken", "Copy that value and run exchangeProdPublicToken() to paste it.");
+    Debug.log("generateProdLinkToken", "After authorizing, switch back here and run exchangeProdPublicToken().");
+    Debug.log("generateProdLinkToken", "(No need to copy anything — I will check the link token status via API)");
   } catch (err) {
     Debug.error("generateProdLinkToken", err);
   }
@@ -272,26 +274,34 @@ function generateProdLinkToken() {
  * Exchange a production public_token from the Plaid Link redirect.
  */
 function exchangeProdPublicToken() {
-  var ui = SpreadsheetApp.getUi();
+  // Get the last link_token that was generated
+  var props = PropertiesService.getScriptProperties();
+  var linkToken = props.getProperty("LAST_LINK_TOKEN");
   
-  var result = ui.prompt(
-    "Public Token",
-    "Paste the public_token from the redirect URL:",
-    ui.ButtonSet.OK_CANCEL
-  );
-  if (result.getSelectedButton() !== ui.Button.OK) return;
-  
-  var publicToken = result.getResponseText().trim();
-  if (!publicToken) {
-    Debug.error("exchangeProdPublicToken", "No token provided.");
+  if (!linkToken) {
+    Debug.error("exchangeProdPublicToken", "No saved link_token found. Run generateProdLinkToken() first.");
     return;
   }
   
-  Debug.log("exchangeProdPublicToken", "Exchanging public_token...");
+  Debug.log("exchangeProdPublicToken", "Checking link token status...");
   
   try {
+    // Call /link/token/get to retrieve the public_token if the session completed
+    var data = PLAID._post("/link/token/get", {
+      link_token: linkToken
+    });
+    
+    var publicToken = data.public_token;
+    if (!publicToken) {
+      Debug.error("exchangeProdPublicToken", "No public_token yet. Complete the Plaid Link flow in your browser first, then run this again.");
+      Debug.log("exchangeProdPublicToken", "Link token status: " + JSON.stringify(data));
+      return;
+    }
+    
+    Debug.log("exchangeProdPublicToken", "Public token retrieved, exchanging for access token...");
     var accessToken = PLAID.exchangePublicToken(publicToken);
     
+    var ui = SpreadsheetApp.getUi();
     var nameResult = ui.prompt(
       "Account Name",
       "Which account is this? (e.g. ally, bofa, chase, discover):",
@@ -299,10 +309,12 @@ function exchangeProdPublicToken() {
     );
     if (nameResult.getSelectedButton() !== ui.Button.OK) return;
     
-    PLAID.storeAccessToken(nameResult.getResponseText().trim(), accessToken);
-    var accounts = PLAID.getAccounts(nameResult.getResponseText().trim());
+    var itemName = nameResult.getResponseText().trim();
+    PLAID.storeAccessToken(itemName, accessToken);
+    var accounts = PLAID.getAccounts(itemName);
     
-    Debug.log("exchangeProdPublicToken", "[OK] " + nameResult.getResponseText().trim() + " linked.");
+    props.deleteProperty("LAST_LINK_TOKEN");
+    Debug.log("exchangeProdPublicToken", "[OK] " + itemName + " linked. Run syncProductionAccount('" + itemName + "') to pull data.");
   } catch (err) {
     Debug.error("exchangeProdPublicToken", err);
   }
