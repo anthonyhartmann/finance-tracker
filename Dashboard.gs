@@ -126,9 +126,17 @@ const DASHBOARD = {
     Debug.log("Dashboard.calculateSpend", "Data rows: " + (data.length - 1) + ", date range: " + startDate + " to " + endDate);
     var matchedDate = 0, matchedCategory = 0, matchedAmount = 0;
     for (var r = 1; r < data.length; r++) {
-      var date = String(data[r][2] || "");
+      var rawDate = data[r][2];
       var amount = Number(data[r][5]) || 0;
       var category = String(data[r][6] || "");
+      
+      // Dates come from getValues() as Date objects — format them for comparison
+      var date = "";
+      if (rawDate instanceof Date) {
+        date = Utilities.formatDate(rawDate, Session.getScriptTimeZone(), "yyyy-MM-dd");
+      } else {
+        date = String(rawDate || "");
+      }
       
       if (date < startDate || date > endDate) continue;
       matchedDate++;
