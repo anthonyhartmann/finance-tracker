@@ -252,25 +252,35 @@ function generateProdLinkToken() {
     Debug.log("generateProdLinkToken", "User ID: " + userId);
     props.setProperty("PLAID_USER_ID", userId);
     
-    // Step 2: Create link token (standard)
+    // Step 2: Create link token (standard) + request a Plaid-hosted Link URL
     var data = PLAID._post("/link/token/create", {
       client_name: "Finance Tracker",
       user_id: userId,
       enable_multi_item_link: true,
       products: ["transactions"],
       country_codes: ["US"],
-      language: "en"
+      language: "en",
+      hosted_link: {}
     });
     
     Debug.log("generateProdLinkToken", "Link token generated.");
-    Debug.log("generateProdLinkToken", "Token: " + data.link_token);
+    Debug.log("generateProdLinkToken", "Token (for fallback page): " + data.link_token);
     PropertiesService.getScriptProperties().setProperty("LAST_LINK_TOKEN", data.link_token);
     Debug.log("generateProdLinkToken", "");
-    Debug.log("generateProdLinkToken", "=== OPEN THIS URL IN YOUR BROWSER ===");
-    var linkUrl = "https://cdn.plaid.com/link/v2/stable/link.html?token=" + data.link_token;
-    Debug.log("generateProdLinkToken", linkUrl);
-    Debug.log("generateProdLinkToken", "Connect all 4 banks, then close the tab.");
-    Debug.log("generateProdLinkToken", "Then run exchangeProdPublicToken() to collect the tokens.");
+    // NOTE: cdn.plaid.com/link/v2/stable/link.html is Link's INNER IFRAME page —
+    // opening it directly causes the infinite grey spinner. Use Hosted Link or
+    // the local plaid-link.html page (which loads link-initialize.js properly).
+    if (data.hosted_link_url) {
+      Debug.log("generateProdLinkToken", "=== OPEN THIS URL IN YOUR BROWSER (Plaid Hosted Link) ===");
+      Debug.log("generateProdLinkToken", data.hosted_link_url);
+      Debug.log("generateProdLinkToken", "Connect all banks in that page, then run exchangeProdPublicToken().");
+    } else {
+      Debug.log("generateProdLinkToken", "hosted_link_url was NOT returned by Plaid — using fallback page.");
+      Debug.log("generateProdLinkToken", "1. Open plaid-link.html (repo root) in your browser");
+      Debug.log("generateProdLinkToken", "2. Paste the link token above, connect all banks");
+      Debug.log("generateProdLinkToken", "3. Copy each public_token shown on the page");
+      Debug.log("generateProdLinkToken", "4. Run exchangeProdPublicTokenManual() and paste them in");
+    }
   } catch (err) {
     Debug.error("generateProdLinkToken", err);
   }
@@ -341,6 +351,75 @@ function exchangeProdPublicToken() {
     Debug.log("exchangeProdPublicToken", "[OK] All banks linked. Run syncAllProductionAccounts() to pull data.");
   } catch (err) {
     Debug.error("exchangeProdPublicToken", err);
+  }
+}
+
+/**
+ * Manually exchange public_token(s) copied from the plaid-link.html fallback page.
+ * Use this when Hosted Link is unavailable. Loops until you press Cancel.
+ */
+function exchangeProdPublicTokenManual() {
+  var ui = SpreadsheetApp.getUi();
+  var count = 0;
+
+  Debug.log("exchangeProdPublicTokenManual", "Manual public_token exchange — paste tokens from plaid-link.html");
+
+  while (true) {
+    var resp = ui.prompt(
+      "Exchange public_token #" + (count + 1),
+      "Paste a public_token from plaid-link.html (press Cancel when done):",
+      ui.ButtonSet.OK_CANCEL
+    );
+    if (resp.getSelectedButton() !== ui.Button.OK) break;
+
+    var publicToken = resp.getResponseText().trim();
+    if (!publicToken) {
+      if (count > 0) break;  // empty paste after at least one = done
+      continue;              // empty paste before any = keep asking
+    }
+
+    try {
+      var accessToken = PLAID.exchangePublicToken(publicToken);
+
+      // Try to auto-detect institution name for a sensible default
+      var defaultName = "";
+      try {
+        var itemData = PLAID._post("/item/get", { access_token: accessToken });
+        var instId = itemData.item && itemData.item.institution_id;
+        if (instId) {
+          var instData = PLAID._post("/institutions/get_by_id", {
+            institution_id: instId,
+            country_codes: ["US"]
+          });
+          if (instData.institution && instData.institution.name) {
+            defaultName = instData.institution.name.toLowerCase().replace(/[^a-z0-9]/g, "");
+          }
+        }
+      } catch (lookupErr) {
+        Debug.log("exchangeProdPublicTokenManual", "Institution lookup failed (non-fatal): " + lookupErr.message);
+      }
+
+      var nameResp = ui.prompt(
+        "Name this account" + (defaultName ? " (detected: " + defaultName + ")" : ""),
+        "Token exchanged. Enter a short name (e.g. ally, bofa, chase, discover):",
+        ui.ButtonSet.OK_CANCEL
+      );
+      var typed = (nameResp.getSelectedButton() === ui.Button.OK) ? nameResp.getResponseText().trim().toLowerCase().replace(/[^a-z0-9]/g, "") : "";
+      var itemName = typed || defaultName || ("bank" + (count + 1));
+
+      PLAID.storeAccessToken(itemName, accessToken);
+      Debug.log("exchangeProdPublicTokenManual", "[OK] Linked: " + itemName);
+      count++;
+    } catch (err) {
+      Debug.error("exchangeProdPublicTokenManual", err);
+      ui.alert("Exchange failed: " + err.message + " — see debug tab. Press OK to continue.");
+    }
+  }
+
+  if (count > 0) {
+    Debug.log("exchangeProdPublicTokenManual", "[OK] " + count + " account(s) linked. Run syncAllProductionAccounts() to pull data.");
+  } else {
+    Debug.log("exchangeProdPublicTokenManual", "No tokens exchanged.");
   }
 }
 

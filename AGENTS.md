@@ -19,6 +19,7 @@ Personal finance tracker synced from bank accounts (via Plaid) + interview incom
 ├── Dashboard.gs              # The 3 numbers + month selector
 ├── Webhook.gs                # Webhook receiver (doPost/doGet)
 ├── Tests.gs                  # All test/action functions user runs
+├── plaid-link.html           # Local Plaid Link fallback page (open in browser; NOT clasp-pushed)
 ├── appsscript.json           # OAuth scopes + manifest
 ├── validate_rules.py         # Validates .clinerules structure
 └── .clasp.json               # CLASP config (parent dir)
@@ -55,7 +56,7 @@ Personal finance tracker synced from bank accounts (via Plaid) + interview incom
 | I5 Dashboard | ✅ | 3 numbers (Spend, Net Income, Daily Budget) + month selector |
 | I6 Calendar | □ | Interview income from Calendar |
 | I7 Manual Adj | □ | Adjustments, overrides, no-shows |
-| I8 Production | 🔴 **STUCK** | See below |
+| I8 Production | 🟡 **FIX DEPLOYED** | Root cause found — see below; awaiting user test |
 | I9 Polish | □ | Ignore rules, error emails, monthly summaries |
 
 ## Key Functions (Run from Apps Script Editor)
@@ -70,41 +71,38 @@ Personal finance tracker synced from bank accounts (via Plaid) + interview incom
 - `configureWebhook()` — set webhook URL on sandbox items
 - `setupPlaidProduction()` — stored production keys
 
-### For Production (I8 — currently stuck)
-- `generateProdLinkToken()` — creates link token + user for Multi-Item Link
-- `exchangeProdPublicToken()` — retrieves tokens after Link session completes
+### For Production (I8)
+- `generateProdLinkToken()` — creates link token + user for Multi-Item Link; logs Hosted Link URL
+- `exchangeProdPublicToken()` — retrieves tokens after a Hosted Link session (via /link/token/get)
+- `exchangeProdPublicTokenManual()` — paste public_token(s) from the plaid-link.html fallback page
 - `syncAllProductionAccounts()` — syncs all linked production accounts
 
-## CURRENT BLOCKER: I8 — Plaid Production Link
+## I8 — ROOT CAUSE FOUND, FIX DEPLOYED (awaiting user test)
 
-### Symptom
-`generateProdLinkToken()` generates a token and logs a URL like:
-`https://cdn.plaid.com/link/v2/stable/link.html?token=link-production-xxx`
-Opening this URL shows a blank white page with an infinite grey spinner.
+### Root Cause
+`https://cdn.plaid.com/link/v2/stable/link.html` is **not a launchable page** — it's the inner
+iframe that the official Link JS SDK (`link-initialize.js`) loads and initializes via a
+cross-frame `postMessage` handshake. Opened directly in a tab, the handshake never happens →
+infinite grey spinner. Every failed attempt used this URL, so no query-param change could work.
 
-### What's Been Tried (all failed)
+Also verified dead ends: `plaid.com/demo` is a marketing demo with simulated data (no real
+public_token). The earlier Hosted Link attempt failed only because the response field is
+**`hosted_link_url`** (top-level), not `hosted_link.url`.
 
-1. **CDN URL with `key` param** — `key=CLIENT_ID&token=LINK_TOKEN` — spinner
-2. **CDN URL without `key` param** — just `token=LINK_TOKEN` — spinner
-3. **Hosted Link** (`hosted_link: {}` in link token) — API doesn't return `hosted_link.url` (feature not enabled on account)
-4. **`redirect_uri` set to webhook URL** — Plaid says "OAuth redirect URI must be configured in dashboard" (DNU — Plaid Dashboard requires production redirect URIs to match; user added it but still got INVALID_REQUEST)
-5. **No `redirect_uri`** — spinner
-6. **With and without `webhook` param** — same spinner
-7. **With and without `link_customization_name`** — same spinner
-8. **With and without `enable_multi_item_link`** — same spinner
+### The New Flow (two paths)
+1. **Primary — Hosted Link:** `generateProdLinkToken()` sends `hosted_link: {}` and logs the
+   returned `hosted_link_url`. Open it (a real Plaid-hosted page), connect all banks
+   (Multi-Item Link stays on), then run `exchangeProdPublicToken()` — `/link/token/get` is the
+   documented way to collect tokens from Hosted Link sessions.
+2. **Fallback — local SDK page:** open `plaid-link.html` (repo root) in a browser, paste the
+   link token (logged to debug tab), connect banks; each public_token displays on the page.
+   Then run `exchangeProdPublicTokenManual()` and paste each token.
 
-### Suspected Root Cause
-The `https://cdn.plaid.com/link/v2/stable/link.html` URL in production mode requires a **`key` parameter** that is a Plaid **public_key** (deprecated concept) or something other than `client_id`. The spinner means Link is initializing but failing to authenticate or fetch institution data. In sandbox this works, but production behaves differently.
-
-### Alternative Approaches Not Yet Tried
-
-**A.** Use Plaid's official **Link Demo** page at `https://plaid.com/demo/` — the user connects banks there and Plaid provides a public_token or access_token directly.
-
-**B.** Use the **Plaid Dashboard's "Quickstart"** or built-in Link flow to generate access_tokens, then `storeAccessToken()` them manually.
-
-**C.** Use a **Plaid SDK** in a small Node.js script run locally (outside sandbox) to handle the Link flow properly.
-
-**D.** Check if the Plaid Link CDN URL needs a **`key`** param that is the `client_id` but with a different format or version.
+### Historical attempts (all failed for the root cause above)
+1–8: every variation of opening `cdn.plaid.com/link/v2/stable/link.html?token=...` directly
+(key/no-key, redirect_uri set/unset, webhook on/off, customization on/off, multi-item on/off)
+→ infinite spinner, always. `redirect_uri` must NOT be set unless registered in the Plaid
+Dashboard (OAuth banks use Plaid's default hosted redirect when unset).
 
 ## Reading the Sheet
 
