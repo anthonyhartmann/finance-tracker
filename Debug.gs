@@ -8,7 +8,7 @@
  *         Debug.logRaw("fetchTransactions", response)
  */
 
-const DEBUG = {
+const Debug = {
   SHEET_NAME: "debug",
   
   /**
