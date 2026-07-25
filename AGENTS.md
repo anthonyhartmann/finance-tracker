@@ -1,149 +1,73 @@
 # Finance Tracker — Agent Guide
 
-## Project Overview
+Guidance for working in this codebase. **Project status, milestones, and runbooks
+live in [PLAN.md](PLAN.md)** — read both before making changes.
 
-Personal finance tracker synced from bank accounts (via Plaid) + interview income (via Google Calendar) into a Google Sheet, running on Google Apps Script.
+Personal finance tracker: Plaid (bank sync) + Google Calendar (interview income)
+→ Google Sheet, running on Google Apps Script.
 
-**Sheet:** Finance Tracker (`1vrz59cWikaj3k7hOtOgrZaCc84BQ5OEaZJ0gs5YwE98`)
+**Sheet:** `1vrz59cWikaj3k7hOtOgrZaCc84BQ5OEaZJ0gs5YwE98`
 **GitHub:** `git@github.com:anthonyhartmann/finance-tracker.git`
 **Plaid:** Trial plan, production environment
-**Google API Key:** `AIzaSyBoYyA-QYyWH8ttnDIFJVLG42PXiv6ztAM` (read-only sheets access)
+**Google API key (read-only Sheets):** `AIzaSyBoYyA-QYyWH8ttnDIFJVLG42PXiv6ztAM`
 
-## File Structure
+## File Map
 
 ```
-~/.cline/appsscript/          # Git repo root
-├── Debug.gs                  # Centralized logging — hidden "debug" tab
-├── Plaid.gs                  # Plaid API: tokens, sync, balances
-├── SheetOps.gs               # Sheet write operations
-├── Dashboard.gs              # The 3 numbers + month selector
-├── Webhook.gs                # Webhook receiver (doPost/doGet)
-├── Tests.gs                  # All test/action functions user runs
-├── plaid-link.html           # Local Plaid Link fallback page (open the FILE in a browser to use)
-├── appsscript.json           # OAuth scopes + manifest
-├── validate_rules.py         # Validates .clinerules structure
-└── .clasp.json               # CLASP config (parent dir)
+~/.cline/appsscript/          # Git repo root / clasp rootDir
+├── Debug.gs                  # Debug.log/error/logRaw → hidden "debug" tab. Use for ALL logging.
+├── Plaid.gs                  # PLAID object: API transport, tokens, sync, balances, account names.
+├── SheetOps.gs               # SHEET object: all Sheet writes. Owns transactions column order.
+├── Dashboard.gs              # DASHBOARD object: the 3 numbers + month selector.
+├── Webhook.gs                # doPost/doGet + findItemNameByItemId + configureWebhook + refreshAllBalances.
+├── Setup.gs                  # One-time credential setup (setupPlaidProduction etc).
+├── Link.gs                   # Linking banks: generateProdLinkToken / exchangeProdPublicToken[/Manual].
+├── Sync.gs                   # Day-to-day: syncAllProductionAccounts, syncProductionAccount, resetAndResync.
+├── Tests.gs                  # Diagnostics + DEPRECATED sandbox-era tests (do not run).
+├── plaid-link.html           # Local Plaid Link fallback page (open the FILE in a browser).
+├── PLAN.md                   # Project status, milestones, runbooks.
+├── appsscript.json           # OAuth scopes + manifest.
+└── validate_rules.py         # Validates .clinerules structure.
 ```
 
-## Infrastructure
+## Architecture Invariants (don't break these)
 
-### CLASP (Code Deploy)
-- Code lives in `~/.cline/appsscript/`
-- `clasp push -f` deploys to Google Apps Script (run from `~/.cline`, where `.clasp.json` lives)
-- `clasp pull` syncs Google changes back to local
-- Credentials stored at `~/.clasprc.json`
-- Ignore rules: `~/.cline/.claspignore` (clasp cwd) + `~/.cline/appsscript/.claspignore`
-- Note: a stale copy of `plaid-link.html` may sit in the Apps Script project from the first
-  push (clasp won't untrack it). Harmless — it never executes; ignore it.
-
-### Git
-- `~/.cline/` has its own git repo tracking `.clinerules` only
-- `~/.cline/appsscript/` is the main code repo
-- Push fails sometimes with sandbox EPERM on credential cache, but the push itself succeeds
-
-### Sandbox
-- Runs under `sandbox-exec` with profile at `~/.cline/sandbox.sb`
-- Writes allowed: `~/.cline/`, `/tmp`, `/private/tmp`, `/private/var/folders`
-- `open` (browser), `osascript`, SSH all blocked
-- Google Sheets API with key works for reading data
-- No `sudo` access
-
-## What's Built (Milestones)
-
-| Milestone | Status | What |
-|---|---|---|
-| I1 Foundation | ✅ | Git, CLASP, Debug tab, Plaid sandbox connection test |
-| I2 Single Sync | ✅ | One sandbox bank syncing to sheet |
-| I3 Multi-Account | ✅ | 3 sandbox banks + balances |
-| I4 Webhooks | ✅ | `doPost()` receiver deployed, webhook URL live |
-| I5 Dashboard | ✅ | 3 numbers (Spend, Net Income, Daily Budget) + month selector |
-| I6 Calendar | □ | Interview income from Calendar |
-| I7 Manual Adj | □ | Adjustments, overrides, no-shows |
-| I8 Production | ✅ | Hosted Link works; 4 banks linked (ally, discover, bofa, chase) |
-| I9 Polish | □ | Ignore rules, error emails, monthly summaries |
-
-## Key Functions (Run from Apps Script Editor)
-
-### Already Run (don't re-run unless starting fresh)
-- `setupPlaidConfig()` — stored sandbox keys
-- `testDebugLogging()` — validated logger
-- `testPlaidConnection()` — validated Plaid sandbox
-- `linkAllSandboxAccounts()` — linked 3 sandbox banks
-- `testMultiAccountSync()` — synced all sandbox
-- `initDashboard()` — created dashboard tab
-- `configureWebhook()` — set webhook URL on sandbox items
-- `setupPlaidProduction()` — stored production keys
-
-### For Production (I8) — done
-- `generateProdLinkToken()` — creates link token + user for Multi-Item Link; logs Hosted Link URL
-- `exchangeProdPublicToken()` — retrieves tokens after a Hosted Link session (via /link/token/get)
-- `exchangeProdPublicTokenManual()` — paste public_token(s) from the plaid-link.html fallback page
-- `syncAllProductionAccounts()` — incremental-syncs all linked accounts + one aggregate balance
-- `resetAndResync()` — wipe transactions tab + cursors + sandbox tokens, rebuild from SYNC_START_DATE
-- `configureWebhook()` — points ALL linked items' webhooks at the Apps Script URL (dynamic)
-
-### Sync model (as of 2026-07-25)
-- `PLAID.SYNC_START_DATE = "2026-07-01"` (Plaid.gs) — only transactions on/after this date
-  are written. Plaid has NO server-side date limit; initial sync walks ALL history (up to
-  ~2 years), we filter client-side while advancing the cursor to the present.
-- `PLAID.syncTransactions()` returns `{ added, modified, removed }`; `SHEET.writeTransactions()`
-  applies all three (dedup by transaction_id, overwrite on modify, delete on remove) via one
-  batch rewrite. Pending→posted transitions stay correct.
-- After the initial walk, cursors sit at the live frontier: every later sync is a tiny delta.
-- **Webhooks drive future updates:** Plaid POSTs TRANSACTIONS/SYNC_UPDATES_AVAILABLE → `doPost()`
-  → maps item_id (cached as ITEMID_* props) → incremental sync → aggregate balance refresh.
-- **Web app redeploy required after Webhook.gs changes:** the /exec URL runs a FIXED version.
-  `clasp deploy -i AKfycbxYszvhe8-v7YZaF78oRzVCR6JBbIUITtbjKEI8vdYk-BdXsRctAEOmcruzFXv2RQ2S -d "desc"`
-  redeploys in place (URL unchanged). Current deployment: @3.
-- Multi-Item Link caveat: connect ALL banks in the Hosted Link session BEFORE running
-  `exchangeProdPublicToken()` — it consumes and deletes the stored link token.
-
-## I8 — RESOLVED ✅ (root cause + fix, for the record)
-
-### Root Cause
-`https://cdn.plaid.com/link/v2/stable/link.html` is **not a launchable page** — it's the inner
-iframe that the official Link JS SDK (`link-initialize.js`) loads and initializes via a
-cross-frame `postMessage` handshake. Opened directly in a tab, the handshake never happens →
-infinite grey spinner. Every failed attempt used this URL, so no query-param change could work.
-
-Also verified dead ends: `plaid.com/demo` is a marketing demo with simulated data (no real
-public_token). The earlier Hosted Link attempt failed only because the response field is
-**`hosted_link_url`** (top-level), not `hosted_link.url`.
-
-### The New Flow (two paths)
-1. **Primary — Hosted Link:** `generateProdLinkToken()` sends `hosted_link: {}` and logs the
-   returned `hosted_link_url`. Open it (a real Plaid-hosted page), connect all banks
-   (Multi-Item Link stays on), then run `exchangeProdPublicToken()` — `/link/token/get` is the
-   documented way to collect tokens from Hosted Link sessions.
-2. **Fallback — local SDK page:** open `plaid-link.html` (repo root) in a browser, paste the
-   link token (logged to debug tab), connect banks; each public_token displays on the page.
-   Then run `exchangeProdPublicTokenManual()` and paste each token.
-
-### Historical attempts (all failed for the root cause above)
-1–8: every variation of opening `cdn.plaid.com/link/v2/stable/link.html?token=...` directly
-(key/no-key, redirect_uri set/unset, webhook on/off, customization on/off, multi-item on/off)
-→ infinite spinner, always. `redirect_uri` must NOT be set unless registered in the Plaid
-Dashboard (OAuth banks use Plaid's default hosted redirect when unset).
-
-## Reading the Sheet
-
-Read data via the Google Sheets API with the API key:
-```
-curl -s 'https://sheets.googleapis.com/v4/spreadsheets/{SHEET_ID}/values/{TAB_NAME}?key={API_KEY}'
-```
-
-Tabs and their gids:
-| Tab | gid |
-|---|---|
-| Sheet1 | 0 |
-| debug | 711367457 |
-| transactions | ⚠️ changes whenever `resetAndResync()` recreates the tab — always read by NAME |
-| dashboard | 2006033775 |
+- **Logging:** everything goes through `Debug.log(fnName, msg)` — never Logger.log alone.
+- **ScriptProperties keys:** `PLAID_CLIENT_ID/SECRET/ENVIRONMENT`, `ACCESS_TOKEN_<item>`,
+  `CURSOR_<item>`, `ITEMID_<plaid item_id>` (webhook lookup cache), `ACCT_<account_id>`
+  (account name cache), `WEBHOOK_URL`, `LAST_LINK_TOKEN` (consumed by exchange).
+- **Transactions tab:** column order is owned by `SHEET.writeTransactions` headers
+  (`account_name, date, merchant_name, amount, transaction_id, account_id, name,
+  category, payment_channel, pending, currency, synced_at`). Any code READING the tab
+  must resolve columns **by header name, never by index** (Dashboard does this — copy it).
+- **Sync:** `PLAID.syncTransactions(item)` returns `{ added, modified, removed }`, filtered
+  to `PLAID.SYNC_START_DATE` (currently "2026-07-01"). Cursors persist per item, so after
+  the first walk all syncs are tiny deltas. `SHEET.writeTransactions` applies all three
+  collections via one batch rewrite (dedup/overwrite/delete by transaction_id).
+- **Webhooks:** Plaid TRANSACTIONS webhooks → `doPost` → incremental sync + aggregate
+  balance refresh. Item mapping via ITEMID_ cache.
+- **Web app deployment:** the /exec URL runs a FIXED version. After ANY code change you
+  want live on webhooks: `clasp deploy -i AKfycbxYszvhe8-v7YZaF78oRzVCR6JBbIUITtbjKEI8vdYk-BdXsRctAEOmcruzFXv2RQ2S -d "desc"` (URL unchanged).
+- **Plaid Link:** NEVER open `cdn.plaid.com/link/v2/stable/link.html` directly (it's the
+  SDK's inner iframe → infinite grey spinner). Use Hosted Link (`hosted_link: {}` →
+  `hosted_link_url` in response) or plaid-link.html (which loads link-initialize.js).
 
 ## Dev Workflow
 
-1. Write code → `node -e "new Function(fs.readFileSync('FILE.gs','utf8'))"` → syntax check
-2. `git add -A && git commit -m "message"`
-3. `git push` (may show EPERM but succeeds)
-4. `clasp push -f`
-5. Tell user what to run to test
+1. Edit → syntax check: `node -e "new Function(fs.readFileSync('FILE.gs','utf8'))"`
+2. `git add -A && git commit -m "..."` → `git push` (EPERM warning on credential cache is normal; push succeeds)
+3. `clasp push -f` from `~/.cline` (where .clasp.json lives)
+4. If Webhook.gs behavior must go live: `clasp deploy -i <id above>` (bumps version, same URL)
+5. Tell the user exactly what to run in the Apps Script editor to verify.
+
+## Reading the Sheet (from shell)
+
+```
+curl -s 'https://sheets.googleapis.com/v4/spreadsheets/{SHEET_ID}/values/{TAB_NAME}?key={API_KEY}'
+```
+Tabs: Sheet1 (0), debug (711367457), transactions (gid changes on rebuild — read by NAME), dashboard (2006033775).
+
+## Shell Sandbox
+
+`sandbox-exec` profile `~/.cline/sandbox.sb`: writes allowed to `~/.cline/`, `/tmp`.
+`open`, `osascript`, SSH blocked. No sudo.

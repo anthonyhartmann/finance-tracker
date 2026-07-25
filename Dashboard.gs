@@ -121,14 +121,25 @@ const DASHBOARD = {
     
     var data = sheet.getDataRange().getValues();
     var total = 0;
-    
-    // Headers: transaction_id, account_id, date, name, merchant_name, amount, category, payment_channel, pending, currency, synced_at
+
+    // Resolve columns from the header row (order-independent)
+    if (data.length < 1) return 0;
+    var header = [];
+    for (var h = 0; h < data[0].length; h++) header.push(String(data[0][h]));
+    var dateCol = header.indexOf("date");
+    var amountCol = header.indexOf("amount");
+    var catCol = header.indexOf("category");
+    if (dateCol < 0 || amountCol < 0) {
+      Debug.error("Dashboard.calculateSpend", "transactions tab missing date/amount columns");
+      return 0;
+    }
+
     Debug.log("Dashboard.calculateSpend", "Data rows: " + (data.length - 1) + ", date range: " + startDate + " to " + endDate);
     var matchedDate = 0, matchedCategory = 0, matchedAmount = 0;
     for (var r = 1; r < data.length; r++) {
-      var rawDate = data[r][2];
-      var amount = Number(data[r][5]) || 0;
-      var category = String(data[r][6] || "");
+      var rawDate = data[r][dateCol];
+      var amount = Number(data[r][amountCol]) || 0;
+      var category = catCol >= 0 ? String(data[r][catCol] || "") : "";
       
       // Dates come from getValues() as Date objects — format them for comparison
       var date = "";

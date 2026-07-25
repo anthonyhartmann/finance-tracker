@@ -43,9 +43,12 @@ const SHEET = {
    */
   writeTransactions: function (syncResult) {
     const tabName = "transactions";
+    // Column order is fixed by this array. Existing tabs in an older layout
+    // are migrated automatically below (rows are read by header NAME).
     const headers = [
-      "transaction_id", "account_id", "date", "name", "merchant_name",
-      "amount", "category", "payment_channel", "pending", "currency", "synced_at"
+      "account_name", "date", "merchant_name", "amount",
+      "transaction_id", "account_id", "name", "category",
+      "payment_channel", "pending", "currency", "synced_at"
     ];
 
     const sheet = this.ensureTab(tabName, headers);
@@ -60,32 +63,54 @@ const SHEET = {
       removed = syncResult.removed || [];
     }
 
-    // Load existing rows, index by transaction_id (preserving order)
+    // Load existing rows as OBJECTS keyed by their current header names,
+    // indexed by transaction_id (preserving order). Migrates old layouts.
     var data = sheet.getDataRange().getValues();
     var byId = {};
     var order = [];
-    for (var r = 1; r < data.length; r++) {
-      var id = String(data[r][0] || "");
-      if (id) {
-        byId[id] = data[r];
+    if (data.length > 1) {
+      var oldHeader = [];
+      for (var h = 0; h < data[0].length; h++) oldHeader.push(String(data[0][h]));
+      var idCol = oldHeader.indexOf("transaction_id");
+      if (idCol < 0) idCol = 0;
+      for (var r = 1; r < data.length; r++) {
+        var id = String(data[r][idCol] || "");
+        if (!id) continue;
+        var obj = {};
+        for (var c = 0; c < oldHeader.length; c++) {
+          if (oldHeader[c]) obj[oldHeader[c]] = data[r][c];
+        }
+        byId[id] = obj;
         order.push(id);
       }
     }
 
+    // Resolve account names for anything missing one
+    var needIds = [];
+    function collect(id) { if (id && needIds.indexOf(id) < 0) needIds.push(String(id)); }
+    var n;
+    for (n = 0; n < added.length; n++) collect(added[n].account_id);
+    for (n = 0; n < modified.length; n++) collect(modified[n].account_id);
+    for (var oid in byId) {
+      if (!byId[oid].account_name) collect(byId[oid].account_id);
+    }
+    var acctNames = needIds.length > 0 ? PLAID.getAccountNames(needIds) : {};
+
     var now = new Date().toISOString();
     function toRow(t) {
       return [
-        t.transaction_id,
-        t.account_id,
-        t.authorized_date || t.date,
-        t.name,
+        t.account_name || acctNames[String(t.account_id)] || "",
+        t.authorized_date || t.date || "",
         t.merchant_name || "",
         t.amount,
-        t.personal_finance_category ? t.personal_finance_category.primary : "",
+        t.transaction_id,
+        t.account_id,
+        t.name || "",
+        (typeof t.category === "string") ? t.category : (t.personal_finance_category ? t.personal_finance_category.primary : ""),
         t.payment_channel || "",
-        t.pending ? "TRUE" : "FALSE",
-        t.iso_currency_code || "USD",
-        now,
+        (t.pending === true || t.pending === "TRUE") ? "TRUE" : "FALSE",
+        t.currency || t.iso_currency_code || "USD",
+        t.synced_at || now,
       ];
     }
 
@@ -102,10 +127,10 @@ const SHEET = {
       var mt = modified[m];
       var mid = String(mt.transaction_id);
       if (byId[mid]) {
-        byId[mid] = toRow(mt);
+        byId[mid] = mt;
         updatedCount++;
       } else {
-        byId[mid] = toRow(mt);
+        byId[mid] = mt;
         order.push(mid);
         addedCount++;
       }
@@ -117,15 +142,15 @@ const SHEET = {
         dupeCount++;
         continue;
       }
-      byId[aid] = toRow(at);
+      byId[aid] = at;
       order.push(aid);
       addedCount++;
     }
 
-    // Rewrite tab in one batch
+    // Rewrite tab in one batch (every entry passes through toRow → new column order)
     var out = [];
     for (var k = 0; k < order.length; k++) {
-      if (byId[order[k]]) out.push(byId[order[k]]);
+      if (byId[order[k]]) out.push(toRow(byId[order[k]]));
     }
     sheet.clearContents();
     sheet.getRange(1, 1, 1, headers.length).setValues([headers]);

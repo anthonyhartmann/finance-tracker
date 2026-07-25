@@ -191,6 +191,47 @@ const PLAID = {
   },
   
   /**
+   * Resolve account_id -> display label ("Name •mask"), cached in
+   * ScriptProperties as ACCT_<account_id>. Only calls the API for uncached ids.
+   * Pass an array of account_ids; returns a { account_id: label } map.
+   */
+  getAccountNames: function (accountIds) {
+    var props = PropertiesService.getScriptProperties();
+    var map = {};
+    var missing = [];
+    for (var i = 0; i < accountIds.length; i++) {
+      var id = String(accountIds[i]);
+      if (!id) continue;
+      var cached = props.getProperty("ACCT_" + id);
+      if (cached) { map[id] = cached; }
+      else if (missing.indexOf(id) < 0) { missing.push(id); }
+    }
+
+    if (missing.length > 0) {
+      var keys = props.getKeys();
+      for (var k = 0; k < keys.length && missing.length > 0; k++) {
+        if (keys[k].indexOf("ACCESS_TOKEN_") !== 0) continue;
+        try {
+          var data = this._post("/accounts/get", { access_token: props.getProperty(keys[k]) });
+          for (var a = 0; a < data.accounts.length; a++) {
+            var acct = data.accounts[a];
+            var label = acct.name + (acct.mask ? " •" + acct.mask : "");
+            props.setProperty("ACCT_" + acct.account_id, label);
+            var mi = missing.indexOf(acct.account_id);
+            if (mi >= 0) {
+              map[acct.account_id] = label;
+              missing.splice(mi, 1);
+            }
+          }
+        } catch (e) {
+          Debug.log("Plaid.getAccountNames", "accounts/get failed for " + keys[k] + ": " + e.message);
+        }
+      }
+    }
+    return map;
+  },
+
+  /**
    * Fetch live balances via /accounts/balance/get.
    * Returns array of { name, type, available, current }
    */
