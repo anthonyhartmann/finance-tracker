@@ -6,8 +6,7 @@
  */
 
 /**
- * Handle incoming POST from Plaid webhook.
- * Plaid sends SYNC_UPDATES_AVAILABLE when new transaction data is ready.
+ * Handle incoming POST from Plaid webhook or OAuth redirect.
  */
 function doPost(e) {
   Debug.ensureTab();
@@ -18,8 +17,24 @@ function doPost(e) {
       .setMimeType(ContentService.MimeType.JSON);
   }
   
+  var rawBody = e.postData.contents;
+  Debug.log("doPost", "POST body: " + rawBody.substring(0, 500));
+  
+  // Check if this is a Plaid OAuth redirect with public_token
   try {
-    var data = JSON.parse(e.postData.contents);
+    var parsed = JSON.parse(rawBody);
+    if (parsed.public_token) {
+      Debug.log("doPost", "=== PLAID REDIRECT WITH PUBLIC TOKEN ===");
+      Debug.log("doPost", "public_token: " + parsed.public_token);
+      return ContentService.createTextOutput(JSON.stringify({ status: "token_received" }))
+        .setMimeType(ContentService.MimeType.JSON);
+    }
+  } catch (e) {
+    // Not JSON, continue to normal webhook handling
+  }
+  
+  try {
+    var data = JSON.parse(rawBody);
     Debug.logRaw("doPost", data);
     
     var webhookType = data.webhook_type;
@@ -63,6 +78,16 @@ function doPost(e) {
 function doGet(e) {
   Debug.ensureTab();
   
+  Debug.log("doGet", "GET received at " + new Date().toISOString());
+  
+  // Log ALL parameters for debugging
+  if (e && e.parameter) {
+    Debug.logRaw("doGet", { parameters: e.parameter });
+  }
+  if (e && e.queryString) {
+    Debug.log("doGet", "Query string: " + e.queryString);
+  }
+  
   // Check if this is a Plaid Link redirect with a public_token
   if (e && e.parameter && e.parameter.public_token) {
     Debug.log("doGet", "=== PLAID LINK REDIRECT RECEIVED ===");
@@ -70,8 +95,13 @@ function doGet(e) {
     Debug.log("doGet", "Run exchangeProdPublicToken() and paste this token.");
     return ContentService.createTextOutput(
       "Finance Tracker - Plaid Link connected! "
-      + "Public token received. You can close this tab."
+      + "Public token received. Close this tab and check the debug tab."
     ).setMimeType(ContentService.MimeType.TEXT);
+  }
+  
+  // Also check postData (Plaid might send token in POST body)
+  if (e && e.postData) {
+    Debug.log("doGet", "POST data present: " + e.postData.contents);
   }
   
   return ContentService.createTextOutput("Webhook endpoint is live. POST only.")
