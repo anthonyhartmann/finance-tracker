@@ -19,7 +19,7 @@ Personal finance tracker synced from bank accounts (via Plaid) + interview incom
 ├── Dashboard.gs              # The 3 numbers + month selector
 ├── Webhook.gs                # Webhook receiver (doPost/doGet)
 ├── Tests.gs                  # All test/action functions user runs
-├── plaid-link.html           # Local Plaid Link fallback page (open in browser; NOT clasp-pushed)
+├── plaid-link.html           # Local Plaid Link fallback page (open the FILE in a browser to use)
 ├── appsscript.json           # OAuth scopes + manifest
 ├── validate_rules.py         # Validates .clinerules structure
 └── .clasp.json               # CLASP config (parent dir)
@@ -29,9 +29,12 @@ Personal finance tracker synced from bank accounts (via Plaid) + interview incom
 
 ### CLASP (Code Deploy)
 - Code lives in `~/.cline/appsscript/`
-- `clasp push -f` deploys to Google Apps Script
+- `clasp push -f` deploys to Google Apps Script (run from `~/.cline`, where `.clasp.json` lives)
 - `clasp pull` syncs Google changes back to local
 - Credentials stored at `~/.clasprc.json`
+- Ignore rules: `~/.cline/.claspignore` (clasp cwd) + `~/.cline/appsscript/.claspignore`
+- Note: a stale copy of `plaid-link.html` may sit in the Apps Script project from the first
+  push (clasp won't untrack it). Harmless — it never executes; ignore it.
 
 ### Git
 - `~/.cline/` has its own git repo tracking `.clinerules` only
