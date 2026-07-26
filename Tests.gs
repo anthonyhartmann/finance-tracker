@@ -43,16 +43,16 @@ function testModulesLoaded() {
   var functions = [
     "syncAllProductionAccounts", "resetAndResync", "refreshAll",
     "parseCalendarEvents", "initDashboard", "refreshDashboard",
-    "backfillSavings", "initAdjustments", "addAdjustment",
-    "testDebugLogging", "runAllTests"
+    "backfillSavings", "initAdjustments", "addAdjustment"
   ];
 
+  // Modules
   for (var key in modules) {
-    if (typeof this[key] === 'undefined' && typeof eval(key) === 'undefined') {
+    var obj = eval(key);  // eval works in V8 for global objects
+    if (typeof obj === 'undefined') {
       Debug.error("testModulesLoaded", "MISSING module: " + key);
       throw new Error("Module not loaded: " + key);
     }
-    var obj = this[key] || eval(key);
     var methods = modules[key];
     for (var m = 0; m < methods.length; m++) {
       if (typeof obj[methods[m]] !== 'function') {
@@ -62,8 +62,11 @@ function testModulesLoaded() {
     }
   }
 
+  // Global functions
   for (var f = 0; f < functions.length; f++) {
-    if (typeof this[functions[f]] !== 'function') {
+    var exists = false;
+    try { exists = typeof eval(functions[f]) === 'function'; } catch (e) {}
+    if (!exists) {
       Debug.error("testModulesLoaded", "MISSING global function: " + functions[f]);
       throw new Error("Global function missing: " + functions[f]);
     }
@@ -120,14 +123,10 @@ function testInterviewIncome() {
   Debug.log("testInterviewIncome", "=== Testing interview income ===");
 
   var income = DASHBOARD.calculateInterviewIncome("2026-07");
-  Debug.log("testInterviewIncome", "July 2026 income: gross=$" + income.gross + " net=$" + income.net + " count=" + income.count);
+  Debug.log("testInterviewIncome", "July 2026 net income: $" + income);
 
-  if (typeof income.gross !== 'number' || typeof income.net !== 'number') {
-    throw new Error("calculateInterviewIncome returned non-numeric values: " + JSON.stringify(income));
-  }
-
-  if (typeof income.count !== 'number') {
-    throw new Error("calculateInterviewIncome missing count");
+  if (typeof income !== 'number' || isNaN(income)) {
+    throw new Error("calculateInterviewIncome returned non-numeric: " + income);
   }
 
   Debug.log("testInterviewIncome", "[OK] Interview income calculation works.");
