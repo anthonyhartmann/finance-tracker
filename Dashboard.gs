@@ -13,6 +13,18 @@ const DASHBOARD = {
   init: function () {
     var ss = SpreadsheetApp.getActiveSpreadsheet();
     var sheet = ss.getSheetByName(this.TAB);
+    var existingTarget = null;
+    if (sheet) {
+      // Preserve Monthly Target across re-inits
+      try {
+        var b5 = sheet.getRange("B5").getValue();
+        if (b5 !== "" && b5 !== null && !isNaN(Number(b5))) {
+          existingTarget = Number(b5);
+        }
+      } catch (e) {
+        // ignore — will fall back to default
+      }
+    }
     if (!sheet) {
       sheet = ss.insertSheet(this.TAB);
     }
@@ -23,7 +35,7 @@ const DASHBOARD = {
       ["🔄 Refresh All", "", "Click checkbox to sync transactions, savings, and calendar"],
       ["Controls", "", ""],
       ["Month (YYYY-MM)", new Date().getFullYear() + "-" + padMonth(new Date().getMonth() + 1), ""],
-      ["Monthly Target", 4000, ""],
+      ["Monthly Target", existingTarget !== null ? existingTarget : 4000, ""],
       ["", "", ""],
       ["The 3 Numbers", "", ""],
       ["Actual Spend", "", "Money out (excl transfers)"],
@@ -169,6 +181,13 @@ const DASHBOARD = {
     sheet.getRange("C13").setValue("Target: $" + target + ", " + daysRemaining + " days left");
 
     Debug.log("Dashboard.refresh", "Spend: $" + spend + " | Recurring: $" + upcomingRecurring + " | Net: $" + netIncome + " | Daily: $" + Math.round(dailyBudget));
+
+    // Subtle toast so user knows the refresh happened
+    try {
+      ss.toast("Dashboard refreshed.", "✅", 2);
+    } catch (e) {
+      // toast can fail outside UI context — ignore
+    }
   },
 
   /**
