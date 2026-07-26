@@ -1,12 +1,9 @@
 /**
  * Savings.gs — Completely isolated savings tracker.
  *
- * Uses Plaid /transactions/get (not sync) and /investments/transactions/get
- * to backfill arbitrary date ranges without touching main tracker cursors.
- *
  * Tab: savings_tracker
- * Columns: month, net_savings(formula), transfers_auto, retirement_auto, ally_auto,
- *          manual_transfers, manual_retirement, manual_ally_out, details
+ * Columns: month, net_savings(formula), transfers_auto, retirement_auto,
+ *          ally_auto, manual_transfers, manual_retirement, manual_ally_out, details
  */
 
 const SAVINGS = {
@@ -16,30 +13,38 @@ const SAVINGS = {
     "ally_auto", "manual_transfers", "manual_retirement", "manual_ally_out", "details"
   ],
 
-  // Bank items to query for savings tracker (skip discover, chase)
   BANK_ITEMS: ["ally", "bofa", "fidelity"],
-
   EXCLUDE_KEYWORDS: ["venmo", "zelle", "cash app", "paypal", "cashapp", "atm", "withdrawal", "withdrwl"],
 
+  /**
+   * Backfill savings data. Creates rows for ALL months in range.
+   * Preserves manual columns (F, G, H) — only updates auto columns (C, D, E).
+   */
   backfill: function (startDate, endDate) {
     startDate = startDate || "2026-01-01";
     endDate = endDate || Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "yyyy-MM-dd");
 
     Debug.log("Savings.backfill", "Range: " + startDate + " to " + endDate);
 
+    // 1) Read existing sheet data to preserve manual columns
+    var sheet = this.ensureTab();
+    var existing = this.readExisting(sheet);
+
+    // 2) Fetch auto-detected transactions
     var allTx = this.fetchAllTransactions(startDate, endDate);
     var allInvTx = this.fetchAllInvestmentTransactions(startDate, endDate);
     Debug.log("Savings.backfill", "Fetched " + allTx.length + " bank tx, " + allInvTx.length + " investment tx");
 
-    var byMonth = {};
+    // 3) Build month map for ALL months in range
+    var byMonth = this.buildMonthMap(startDate, endDate, existing);
 
-    // Bank transactions
+    // 4) Overlay bank transactions
     for (var i = 0; i < allTx.length; i++) {
       var t = allTx[i];
       var date = t.date || t.authorized_date || "";
       if (!date || date < startDate || date > endDate) continue;
       var month = date.substring(0, 7);
-      if (!byMonth[month]) byMonth[month] = { transfers: 0, retirement: 0, ally: 0, details: [] };
+      if (!byMonth[month]) continue;
 
       var accountName = String(t._account_name || "").toLowerCase();
       var accountSubtype = String(t._account_subtype || "").toLowerCase();
@@ -64,13 +69,13 @@ const SAVINGS = {
       }
     }
 
-    // Investment transactions (401k contributions)
+    // 5) Overlay investment transactions (401k)
     for (var j = 0; j < allInvTx.length; j++) {
       var inv = allInvTx[j];
       var invDate = inv.date || "";
       if (!invDate || invDate < startDate || invDate > endDate) continue;
       var invMonth = invDate.substring(0, 7);
-      if (!byMonth[invMonth]) byMonth[invMonth] = { transfers: 0, retirement: 0, ally: 0, details: [] };
+      if (!byMonth[invMonth]) continue;
 
       var subtype = String(inv.subtype || "").toLowerCase();
       var invAmount = Number(inv.amount) || 0;
@@ -83,17 +88,67 @@ const SAVINGS = {
       }
     }
 
-    // Write to sheet
-    var sheet = this.ensureTab();
+    // 6) Write to sheet (preserves manual columns)
+    this.writeSheet(sheet, byMonth);
+
+    Debug.log("Savings.backfill", "Wrote " + Object.keys(byMonth).length + " month(s)");
+  },
+
+  /**
+   * Read existing sheet data to preserve manual columns.
+   */
+  readExisting: function (sheet) {
+    var existing = {};
+    var data = sheet.getDataRange().getValues();
+    for (var i = 1; i < data.length; i++) {
+      var month = String(data[i][0]).trim();
+      if (!month) continue;
+      existing[month] = {
+        manual_transfers: Number(data[i][5]) || 0,
+        manual_retirement: Number(data[i][6]) || 0,
+        manual_ally: Number(data[i][7]) || 0
+      };
+    }
+    return existing;
+  },
+
+  /**
+   * Build a map of ALL months from startDate to endDate.
+   */
+  buildMonthMap: function (startDate, endDate, existing) {
+    var map = {};
+    var start = new Date(startDate + "-01");
+    var end = new Date(endDate.substring(0, 7) + "-01");
+
+    while (start <= end) {
+      var month = Utilities.formatDate(start, Session.getScriptTimeZone(), "yyyy-MM");
+      var prev = existing[month] || {};
+      map[month] = {
+        transfers: 0,
+        retirement: 0,
+        ally: 0,
+        manual_transfers: prev.manual_transfers || 0,
+        manual_retirement: prev.manual_retirement || 0,
+        manual_ally: prev.manual_ally || 0,
+        details: []
+      };
+      start.setMonth(start.getMonth() + 1);
+    }
+    return map;
+  },
+
+  /**
+   * Write data to sheet, preserving manual columns.
+   */
+  writeSheet: function (sheet, byMonth) {
     var months = Object.keys(byMonth).sort();
     var rows = [];
     for (var m = 0; m < months.length; m++) {
       var mm = months[m];
       var d = byMonth[mm];
       var detailText = d.details.join("\n");
-      // net_savings formula: auto_transfers + auto_retirement - auto_ally + manual_transfers + manual_retirement - manual_ally_out
       var formula = '=C' + (m + 2) + '+D' + (m + 2) + '-E' + (m + 2) + '+F' + (m + 2) + '+G' + (m + 2) + '-H' + (m + 2);
-      rows.push([mm, formula, d.transfers, d.retirement, d.ally, 0, 0, 0, detailText]);
+      rows.push([mm, formula, d.transfers, d.retirement, d.ally, d.manual_transfers, d.manual_retirement, d.manual_ally, detailText]);
     }
 
     sheet.clearContents();
@@ -103,16 +158,11 @@ const SAVINGS = {
     }
     sheet.setFrozenRows(1);
 
-    // Format: wrap text on details column, fixed width
-    var detailsCol = this.HEADERS.length; // last column
-    var detailRange = sheet.getRange(1, detailsCol, rows.length + 1, 1);
-    detailRange.setWrapStrategy(SpreadsheetApp.WrapStrategy.WRAP);
+    // Format details column
+    var detailsCol = this.HEADERS.length;
+    sheet.getRange(1, detailsCol, rows.length + 1, 1).setWrapStrategy(SpreadsheetApp.WrapStrategy.WRAP);
     sheet.setColumnWidth(detailsCol, 300);
-
-    // Format: wrap on month column too
     sheet.getRange(1, 1, rows.length + 1, 1).setWrapStrategy(SpreadsheetApp.WrapStrategy.WRAP);
-
-    Debug.log("Savings.backfill", "Wrote " + rows.length + " month(s)");
   },
 
   isExcluded: function (text) {
@@ -134,28 +184,21 @@ const SAVINGS = {
   fetchAllTransactions: function (startDate, endDate) {
     var props = PropertiesService.getScriptProperties();
     var all = [];
-
     for (var i = 0; i < this.BANK_ITEMS.length; i++) {
       var itemName = this.BANK_ITEMS[i];
       var token = props.getProperty("ACCESS_TOKEN_" + itemName);
       if (!token) continue;
-
       try {
         var accounts = PLAID.getAccounts(itemName);
-        var accountMap = {};
-        var subtypeMap = {};
+        var accountMap = {}; var subtypeMap = {};
         for (var a = 0; a < accounts.length; a++) {
           accountMap[accounts[a].account_id] = accounts[a].name;
           subtypeMap[accounts[a].account_id] = accounts[a].subtype || "";
         }
-
-        var page = 0;
-        var hasMore = true;
+        var page = 0; var hasMore = true;
         while (hasMore) {
           var data = PLAID._post("/transactions/get", {
-            access_token: token,
-            start_date: startDate,
-            end_date: endDate,
+            access_token: token, start_date: startDate, end_date: endDate,
             options: { offset: page * 500, count: 500 }
           });
           var txList = data.transactions || [];
@@ -164,8 +207,7 @@ const SAVINGS = {
             txList[t]._account_subtype = subtypeMap[txList[t].account_id] || "";
             all.push(txList[t]);
           }
-          hasMore = txList.length === 500;
-          page++;
+          hasMore = txList.length === 500; page++;
         }
         Debug.log("Savings.fetchAllTransactions", itemName + ": done, total " + all.length);
       } catch (e) {
@@ -178,26 +220,20 @@ const SAVINGS = {
   fetchAllInvestmentTransactions: function (startDate, endDate) {
     var props = PropertiesService.getScriptProperties();
     var all = [];
-
     for (var i = 0; i < this.BANK_ITEMS.length; i++) {
       var itemName = this.BANK_ITEMS[i];
       var token = props.getProperty("ACCESS_TOKEN_" + itemName);
       if (!token) continue;
-
       try {
-        var page = 0;
-        var hasMore = true;
+        var page = 0; var hasMore = true;
         while (hasMore) {
           var data = PLAID._post("/investments/transactions/get", {
-            access_token: token,
-            start_date: startDate,
-            end_date: endDate,
+            access_token: token, start_date: startDate, end_date: endDate,
             options: { offset: page * 100, count: 100 }
           });
           var txList = data.investment_transactions || [];
           for (var t = 0; t < txList.length; t++) all.push(txList[t]);
-          hasMore = txList.length === 100;
-          page++;
+          hasMore = txList.length === 100; page++;
         }
         Debug.log("Savings.fetchAllInvestmentTransactions", itemName + ": done, total " + all.length);
       } catch (e) {
@@ -244,31 +280,32 @@ function populateManualAdjustments() {
   }
 
   var data = sheet.getDataRange().getValues();
-  var monthCol = 0;  // column A
-  var manualTransferCol = 5; // column F
-  var manualRetirementCol = 6; // column G
-  var manualAllyCol = 7; // column H
+  var monthCol = 0;
+  var manualTransferCol = 5;
+  var manualRetirementCol = 6;
+  var manualAllyCol = 7;
 
-  // Map: month -> {manual_transfers, manual_retirement, manual_ally_out}
   var manual = {
     "2025-08": { transfers: 4000 + 2000 + 2000, retirement: 0, ally: 0 },
     "2025-10": { transfers: 3400 + 3000, retirement: 0, ally: 0 },
-    "2025-11": { transfers: 1106.37, retirement: 0, ally: 0 }, // 29k - 27,893.63
+    "2025-11": { transfers: 1106.37, retirement: 0, ally: 0 },
     "2026-01": { transfers: 8000, retirement: 0, ally: 0 },
     "2026-02": { transfers: 3000, retirement: 0, ally: 0 },
-    "2026-03": { transfers: 3000, retirement: 0, ally: 3533 }, // 770 + 2520 + 243
+    "2026-03": { transfers: 3000, retirement: 0, ally: 3533 },
     "2026-06": { transfers: 6000, retirement: 0, ally: 0 }
   };
 
+  var updated = 0;
   for (var row = 1; row < data.length; row++) {
-    var month = data[row][monthCol];
+    var month = String(data[row][monthCol]).trim();
     if (manual[month]) {
       sheet.getRange(row + 1, manualTransferCol + 1).setValue(manual[month].transfers);
       sheet.getRange(row + 1, manualRetirementCol + 1).setValue(manual[month].retirement);
       sheet.getRange(row + 1, manualAllyCol + 1).setValue(manual[month].ally);
       Debug.log("populateManualAdjustments", "Set manual values for " + month);
+      updated++;
     }
   }
 
-  Debug.log("populateManualAdjustments", "Done. Review savings_tracker tab.");
+  Debug.log("populateManualAdjustments", "Updated " + updated + " row(s).");
 }
