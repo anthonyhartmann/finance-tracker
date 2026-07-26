@@ -5,7 +5,7 @@
  * without touching the main tracker's cursors.
  *
  * Detects per month:
- *   + Transfers from BofA Checking → savings (Ally, Pershing, etc.)
+ *   + Transfers from checking accounts → savings (Ally, Pershing, etc.)
  *   + 401k contributions (Fidelity NetBenefits)
  *   − Any outflow from Ally (taxes, big withdrawals)
  *
@@ -32,6 +32,7 @@ const SAVINGS = {
     Debug.log("Savings.backfill", "Fetched " + allTx.length + " total transactions");
 
     var byMonth = {};
+    var debugMatches = { transfers: [], retirement: [], ally: [] };
 
     for (var i = 0; i < allTx.length; i++) {
       var t = allTx[i];
@@ -45,22 +46,25 @@ const SAVINGS = {
 
       var accountName = String(t._account_name || "").toLowerCase();
       var accountSubtype = String(t._account_subtype || "").toLowerCase();
-      var category = (typeof t.category === "string") ? t.category.toUpperCase()
-        : (t.personal_finance_category ? t.personal_finance_category.primary.toUpperCase() : "");
+      var category = this.getCategory(t);
       var merchant = String(t.merchant_name || "").toLowerCase();
       var name = String(t.name || "").toLowerCase();
       var amount = Number(t.amount) || 0;
 
-      // 1) Transfers FROM checking accounts TO savings
-      //    Detected by: category = TRANSFER, subtype = checking, amount > 0 (money out of checking)
+      // 1) Transfers FROM checking accounts → savings
+      //    Plaid categories: TRANSFER_OUT, TRANSFER_IN, TRANSFER
+      var isTransfer = category.indexOf("TRANSFER") >= 0;
       var isChecking = accountSubtype === "checking" || accountName.indexOf("checking") >= 0;
-      if (category === "TRANSFER" && isChecking && amount > 0) {
+      if (isTransfer && isChecking && amount > 0) {
         byMonth[month].transfers += amount;
+        debugMatches.transfers.push(date + " | " + accountName + " | " + name + " | $" + amount);
         continue;
       }
 
-      // 2) 401k contributions — Fidelity NetBenefits
+      // 2) 401k contributions — Fidelity / NetBenefits / retirement keywords
       var isRetirement = (
+        accountName.indexOf("401k") >= 0 ||
+        accountName.indexOf("fidelity") >= 0 ||
         merchant.indexOf("netbenefits") >= 0 ||
         merchant.indexOf("fidelity") >= 0 ||
         name.indexOf("netbenefits") >= 0 ||
@@ -69,6 +73,7 @@ const SAVINGS = {
       );
       if (isRetirement && amount > 0) {
         byMonth[month].retirement += amount;
+        debugMatches.retirement.push(date + " | " + accountName + " | " + name + " | $" + amount);
         continue;
       }
 
@@ -76,7 +81,22 @@ const SAVINGS = {
       var isAlly = accountName.indexOf("ally") >= 0;
       if (isAlly && amount > 0) {
         byMonth[month].ally_out += amount;
+        debugMatches.ally.push(date + " | " + accountName + " | " + name + " | $" + amount);
       }
+    }
+
+    // Debug: log matched transactions
+    Debug.log("Savings.backfill", "Transfers matched: " + debugMatches.transfers.length);
+    for (var d = 0; d < Math.min(debugMatches.transfers.length, 10); d++) {
+      Debug.log("Savings.backfill", "[TRANSFER] " + debugMatches.transfers[d]);
+    }
+    Debug.log("Savings.backfill", "Retirement matched: " + debugMatches.retirement.length);
+    for (var d2 = 0; d2 < Math.min(debugMatches.retirement.length, 10); d2++) {
+      Debug.log("Savings.backfill", "[RETIREMENT] " + debugMatches.retirement[d2]);
+    }
+    Debug.log("Savings.backfill", "Ally outflows matched: " + debugMatches.ally.length);
+    for (var d3 = 0; d3 < Math.min(debugMatches.ally.length, 10); d3++) {
+      Debug.log("Savings.backfill", "[ALLY] " + debugMatches.ally[d3]);
     }
 
     // Write to savings_tracker tab
@@ -98,6 +118,17 @@ const SAVINGS = {
     sheet.setFrozenRows(1);
 
     Debug.log("Savings.backfill", "Wrote " + rows.length + " month(s) to " + this.TAB);
+  },
+
+  /**
+   * Get normalized category string from a Plaid transaction.
+   */
+  getCategory: function (t) {
+    if (typeof t.category === "string") return t.category.toUpperCase();
+    if (t.personal_finance_category && typeof t.personal_finance_category.primary === "string") {
+      return t.personal_finance_category.primary.toUpperCase();
+    }
+    return "";
   },
 
   /**
