@@ -10,12 +10,15 @@
  *   − Ally outflows
  *
  * Tab: savings_tracker
- * Columns: month, transfers_to_savings, retirement_401k, ally_outflows, net_savings, details
+ * Columns: month, net_savings, transfers_to_savings, retirement_401k, ally_outflows, details
  */
 
 const SAVINGS = {
   TAB: "savings_tracker",
-  HEADERS: ["month", "transfers_to_savings", "retirement_401k", "ally_outflows", "net_savings", "details"],
+  HEADERS: ["month", "net_savings", "transfers_to_savings", "retirement_401k", "ally_outflows", "details"],
+
+  // Only these items are queried for savings tracking
+  INCLUDE_ITEMS: ["ally", "bofa", "fidelity"],
 
   EXCLUDE_KEYWORDS: ["venmo", "zelle", "cash app", "paypal", "cashapp", "atm", "withdrawal", "withdrwl"],
 
@@ -99,16 +102,23 @@ const SAVINGS = {
       var mm = months[m];
       var d = byMonth[mm];
       var net = Math.round((d.transfers + d.retirement - d.ally_out) * 100) / 100;
-      var detailText = d.details.join("; ");
-      rows.push([mm, d.transfers, d.retirement, d.ally_out, net, detailText]);
+      var detailText = d.details.join("\n");
+      rows.push([mm, net, d.transfers, d.retirement, d.ally_out, detailText]);
     }
 
-    sheet.clearContents();
+    sheet.clear();
     sheet.getRange(1, 1, 1, this.HEADERS.length).setValues([this.HEADERS]);
     if (rows.length > 0) {
       sheet.getRange(2, 1, rows.length, this.HEADERS.length).setValues(rows);
     }
     sheet.setFrozenRows(1);
+
+    // Format: details column wraps text, fixed width
+    var detailCol = this.HEADERS.indexOf("details") + 1;
+    sheet.getRange(1, detailCol, sheet.getLastRow(), 1)
+      .setWrapStrategy(SpreadsheetApp.WrapStrategy.WRAP)
+      .setVerticalAlignment("top");
+    sheet.setColumnWidth(detailCol, 300);
 
     Debug.log("Savings.backfill", "Wrote " + rows.length + " month(s)");
     Debug.log("Savings.backfill", "Transfers total: " + Object.keys(byMonth).map(function(m) { return byMonth[m].transfers; }).reduce(function(a,b){return a+b;}, 0));
@@ -132,18 +142,19 @@ const SAVINGS = {
   },
 
   /**
-   * Fetch bank transactions for ALL linked items via /transactions/get.
+   * Fetch bank transactions for included items only via /transactions/get.
    */
   fetchAllTransactions: function (startDate, endDate) {
     var props = PropertiesService.getScriptProperties();
-    var keys = props.getKeys();
     var all = [];
 
-    for (var i = 0; i < keys.length; i++) {
-      if (keys[i].indexOf("ACCESS_TOKEN_") !== 0) continue;
-      var itemName = keys[i].replace("ACCESS_TOKEN_", "");
-      var token = props.getProperty(keys[i]);
-      if (!token) continue;
+    for (var i = 0; i < this.INCLUDE_ITEMS.length; i++) {
+      var itemName = this.INCLUDE_ITEMS[i];
+      var token = PLAID.getAccessToken(itemName);
+      if (!token) {
+        Debug.log("Savings.fetchAllTransactions", itemName + ": no access_token, skipping");
+        continue;
+      }
 
       try {
         var accounts = PLAID.getAccounts(itemName);
@@ -185,18 +196,19 @@ const SAVINGS = {
   },
 
   /**
-   * Fetch investment transactions for ALL linked items via /investments/transactions/get.
+   * Fetch investment transactions for included items only via /investments/transactions/get.
    */
   fetchAllInvestmentTransactions: function (startDate, endDate) {
     var props = PropertiesService.getScriptProperties();
-    var keys = props.getKeys();
     var all = [];
 
-    for (var i = 0; i < keys.length; i++) {
-      if (keys[i].indexOf("ACCESS_TOKEN_") !== 0) continue;
-      var itemName = keys[i].replace("ACCESS_TOKEN_", "");
-      var token = props.getProperty(keys[i]);
-      if (!token) continue;
+    for (var i = 0; i < this.INCLUDE_ITEMS.length; i++) {
+      var itemName = this.INCLUDE_ITEMS[i];
+      var token = PLAID.getAccessToken(itemName);
+      if (!token) {
+        Debug.log("Savings.fetchAllInvestmentTransactions", itemName + ": no access_token, skipping");
+        continue;
+      }
 
       try {
         var page = 0;
@@ -220,7 +232,6 @@ const SAVINGS = {
 
         Debug.log("Savings.fetchAllInvestmentTransactions", itemName + ": done, total so far " + all.length);
       } catch (e) {
-        // Product not enabled for this item — skip silently
         if (e.message && e.message.indexOf("PRODUCT_NOT_ENABLED") >= 0) {
           Debug.log("Savings.fetchAllInvestmentTransactions", itemName + ": investments product not enabled, skipping");
         } else {
