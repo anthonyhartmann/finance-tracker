@@ -378,7 +378,8 @@ const DASHBOARD = {
         date = String(rawDate || "");
       }
       var amount = Number(data[r][amountCol]) || 0;
-      if (date >= startDate && date <= endDate) {
+      // Include row if date is empty (applies to current month) or falls within range
+      if (!date || (date >= startDate && date <= endDate)) {
         total += amount;
       }
     }
