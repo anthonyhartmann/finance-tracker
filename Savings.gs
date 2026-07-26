@@ -1,27 +1,24 @@
 /**
  * Savings.gs — Completely isolated savings tracker.
  *
- * Uses Plaid /transactions/get (not sync) to backfill arbitrary date ranges
- * without touching the main tracker's cursors.
+ * Uses Plaid /transactions/get (not sync) to backfill arbitrary date ranges.
  *
  * Detects per month:
- *   + Transfers from checking accounts → savings (Ally, Pershing, etc.)
- *   + 401k contributions (Fidelity NetBenefits)
- *   − Any outflow from Ally (taxes, big withdrawals)
+ *   + Transfers from checking → savings (EXCLUDES Venmo, Zelle, Cash App, PayPal)
+ *   + 401k contributions (Fidelity — auto or manual fallback)
+ *   − Ally outflows
  *
  * Tab: savings_tracker
- * Columns: month, transfers_to_savings, retirement_401k, ally_outflows, net_savings
+ * Columns: month, transfers_to_savings, retirement_401k, ally_outflows, net_savings, details
  */
 
 const SAVINGS = {
   TAB: "savings_tracker",
-  HEADERS: ["month", "transfers_to_savings", "retirement_401k", "ally_outflows", "net_savings"],
+  HEADERS: ["month", "transfers_to_savings", "retirement_401k", "ally_outflows", "net_savings", "details"],
 
-  /**
-   * Backfill savings data for a date range.
-   * @param {string} startDate  YYYY-MM-DD
-   * @param {string} endDate    YYYY-MM-DD
-   */
+  // Peer-to-peer payment keywords to EXCLUDE from "transfers to savings"
+  P2P_KEYWORDS: ["venmo", "zelle", "cash app", "paypal", "cashapp"],
+
   backfill: function (startDate, endDate) {
     startDate = startDate || "2026-01-01";
     endDate = endDate || Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "yyyy-MM-dd");
@@ -32,16 +29,15 @@ const SAVINGS = {
     Debug.log("Savings.backfill", "Fetched " + allTx.length + " total transactions");
 
     var byMonth = {};
-    var debugMatches = { transfers: [], retirement: [], ally: [] };
 
     for (var i = 0; i < allTx.length; i++) {
       var t = allTx[i];
       var date = t.date || t.authorized_date || "";
       if (!date || date < startDate || date > endDate) continue;
 
-      var month = date.substring(0, 7); // YYYY-MM
+      var month = date.substring(0, 7);
       if (!byMonth[month]) {
-        byMonth[month] = { transfers: 0, retirement: 0, ally_out: 0 };
+        byMonth[month] = { transfers: 0, retirement: 0, ally_out: 0, details: [] };
       }
 
       var accountName = String(t._account_name || "").toLowerCase();
@@ -51,13 +47,15 @@ const SAVINGS = {
       var name = String(t.name || "").toLowerCase();
       var amount = Number(t.amount) || 0;
 
-      // 1) Transfers FROM checking accounts → savings
-      //    Plaid categories: TRANSFER_OUT, TRANSFER_IN, TRANSFER
+      // 1) Transfers FROM checking → savings
+      //    Must be TRANSFER category, from checking, amount > 0, NOT a P2P payment
       var isTransfer = category.indexOf("TRANSFER") >= 0;
       var isChecking = accountSubtype === "checking" || accountName.indexOf("checking") >= 0;
-      if (isTransfer && isChecking && amount > 0) {
+      var isP2P = this.isP2P(name + " " + merchant);
+
+      if (isTransfer && isChecking && amount > 0 && !isP2P) {
         byMonth[month].transfers += amount;
-        debugMatches.transfers.push(date + " | " + accountName + " | " + name + " | $" + amount);
+        byMonth[month].details.push(date + ": Transfer to savings $" + amount + " (" + name + ")");
         continue;
       }
 
@@ -73,33 +71,19 @@ const SAVINGS = {
       );
       if (isRetirement && amount > 0) {
         byMonth[month].retirement += amount;
-        debugMatches.retirement.push(date + " | " + accountName + " | " + name + " | $" + amount);
+        byMonth[month].details.push(date + ": 401k contrib $" + amount + " (" + name + ")");
         continue;
       }
 
-      // 3) Ally outflows — ANY positive amount from Ally (money leaving)
+      // 3) Ally outflows — ANY positive amount from Ally
       var isAlly = accountName.indexOf("ally") >= 0;
       if (isAlly && amount > 0) {
         byMonth[month].ally_out += amount;
-        debugMatches.ally.push(date + " | " + accountName + " | " + name + " | $" + amount);
+        byMonth[month].details.push(date + ": Ally outflow $" + amount + " (" + name + ")");
       }
     }
 
-    // Debug: log matched transactions
-    Debug.log("Savings.backfill", "Transfers matched: " + debugMatches.transfers.length);
-    for (var d = 0; d < Math.min(debugMatches.transfers.length, 10); d++) {
-      Debug.log("Savings.backfill", "[TRANSFER] " + debugMatches.transfers[d]);
-    }
-    Debug.log("Savings.backfill", "Retirement matched: " + debugMatches.retirement.length);
-    for (var d2 = 0; d2 < Math.min(debugMatches.retirement.length, 10); d2++) {
-      Debug.log("Savings.backfill", "[RETIREMENT] " + debugMatches.retirement[d2]);
-    }
-    Debug.log("Savings.backfill", "Ally outflows matched: " + debugMatches.ally.length);
-    for (var d3 = 0; d3 < Math.min(debugMatches.ally.length, 10); d3++) {
-      Debug.log("Savings.backfill", "[ALLY] " + debugMatches.ally[d3]);
-    }
-
-    // Write to savings_tracker tab
+    // Write to tab
     var sheet = this.ensureTab();
     var rows = [];
     var months = Object.keys(byMonth).sort();
@@ -107,7 +91,8 @@ const SAVINGS = {
       var mm = months[m];
       var d = byMonth[mm];
       var net = Math.round((d.transfers + d.retirement - d.ally_out) * 100) / 100;
-      rows.push([mm, d.transfers, d.retirement, d.ally_out, net]);
+      var detailText = d.details.join("; ");
+      rows.push([mm, d.transfers, d.retirement, d.ally_out, net, detailText]);
     }
 
     sheet.clearContents();
@@ -117,12 +102,19 @@ const SAVINGS = {
     }
     sheet.setFrozenRows(1);
 
-    Debug.log("Savings.backfill", "Wrote " + rows.length + " month(s) to " + this.TAB);
+    Debug.log("Savings.backfill", "Wrote " + rows.length + " month(s)");
+    Debug.log("Savings.backfill", "Transfers total: " + Object.keys(byMonth).map(function(m) { return byMonth[m].transfers; }).reduce(function(a,b){return a+b;}, 0));
+    Debug.log("Savings.backfill", "Retirement total: " + Object.keys(byMonth).map(function(m) { return byMonth[m].retirement; }).reduce(function(a,b){return a+b;}, 0));
   },
 
-  /**
-   * Get normalized category string from a Plaid transaction.
-   */
+  isP2P: function (text) {
+    text = text.toLowerCase();
+    for (var i = 0; i < this.P2P_KEYWORDS.length; i++) {
+      if (text.indexOf(this.P2P_KEYWORDS[i]) >= 0) return true;
+    }
+    return false;
+  },
+
   getCategory: function (t) {
     if (typeof t.category === "string") return t.category.toUpperCase();
     if (t.personal_finance_category && typeof t.personal_finance_category.primary === "string") {
@@ -131,9 +123,6 @@ const SAVINGS = {
     return "";
   },
 
-  /**
-   * Fetch transactions for ALL linked items via /transactions/get.
-   */
   fetchAllTransactions: function (startDate, endDate) {
     var props = PropertiesService.getScriptProperties();
     var keys = props.getKeys();
@@ -175,7 +164,7 @@ const SAVINGS = {
           page++;
         }
 
-        Debug.log("Savings.fetchAllTransactions", itemName + ": fetched " + all.length + " so far");
+        Debug.log("Savings.fetchAllTransactions", itemName + ": done, total so far " + all.length);
       } catch (e) {
         Debug.error("Savings.fetchAllTransactions", itemName + " failed: " + e.message);
       }
