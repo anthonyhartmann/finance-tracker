@@ -20,7 +20,7 @@ const SAVINGS = {
     startDate = startDate || "2026-01-01";
     endDate = endDate || Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "yyyy-MM-dd");
 
-    Debug.log("Savings.backfill", "Range: " + startDate + " to " + endDate);
+    Debug.log("Savings.backfill", "startDate=" + startDate + " endDate=" + endDate);
 
     var sheet = this.ensureTab();
     var existing = this.readExisting(sheet);
@@ -105,6 +105,9 @@ const SAVINGS = {
     var start = new Date(Number(startParts[0]), Number(startParts[1]) - 1, 1);
     var end = new Date(Number(endParts[0]), Number(endParts[1]) - 1, 1);
 
+    Debug.log("Savings.buildMonthMap", "start=" + start + " end=" + end);
+
+    var count = 0;
     while (start <= end) {
       var month = Utilities.formatDate(start, Session.getScriptTimeZone(), "yyyy-MM");
       var prev = existing[month] || {};
@@ -116,7 +119,10 @@ const SAVINGS = {
         details: []
       };
       start.setMonth(start.getMonth() + 1);
+      count++;
     }
+
+    Debug.log("Savings.buildMonthMap", "Generated " + count + " months: " + Object.keys(map).join(", "));
     return map;
   },
 
@@ -138,10 +144,11 @@ const SAVINGS = {
     }
     sheet.setFrozenRows(1);
 
+    // Details column: overflow (clip) instead of wrap
     var detailsCol = this.HEADERS.length;
-    sheet.getRange(1, detailsCol, rows.length + 1, 1).setWrapStrategy(SpreadsheetApp.WrapStrategy.WRAP);
+    sheet.getRange(1, detailsCol, rows.length + 1, 1).setWrapStrategy(SpreadsheetApp.WrapStrategy.OVERFLOW);
     sheet.setColumnWidth(detailsCol, 300);
-    sheet.getRange(1, 1, rows.length + 1, 1).setWrapStrategy(SpreadsheetApp.WrapStrategy.WRAP);
+    sheet.getRange(1, 1, rows.length + 1, 1).setWrapStrategy(SpreadsheetApp.WrapStrategy.OVERFLOW);
   },
 
   isExcluded: function (text) {
@@ -260,14 +267,14 @@ function populateManualAdjustments() {
   var manualRetirementCol = 6;
   var manualAllyCol = 7;
 
+  // Note: June 2026 auto-detected the $6000 Pershing transfer, so we don't double-count it here.
   var manual = {
     "2025-08": { transfers: 4000 + 2000 + 2000, retirement: 0, ally: 0 },
     "2025-10": { transfers: 3400 + 3000, retirement: 0, ally: 0 },
     "2025-11": { transfers: 1106.37, retirement: 0, ally: 0 },
     "2026-01": { transfers: 8000, retirement: 0, ally: 0 },
     "2026-02": { transfers: 3000, retirement: 0, ally: 0 },
-    "2026-03": { transfers: 3000, retirement: 0, ally: 3533 },
-    "2026-06": { transfers: 6000, retirement: 0, ally: 0 }
+    "2026-03": { transfers: 3000, retirement: 0, ally: 3533 }
   };
 
   var updated = 0;
