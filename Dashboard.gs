@@ -284,6 +284,7 @@ const DASHBOARD = {
   
   /**
    * Calculate manual adjustments.
+   * Reads columns by header name (date, amount).
    */
   calculateManualAdjustments: function (startDate, endDate) {
     var ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -291,10 +292,27 @@ const DASHBOARD = {
     if (!sheet) return 0;
     
     var data = sheet.getDataRange().getValues();
+    if (data.length < 2) return 0;
+    
+    var header = [];
+    for (var h = 0; h < data[0].length; h++) header.push(String(data[0][h]));
+    var dateCol = header.indexOf("date");
+    var amountCol = header.indexOf("amount");
+    if (dateCol < 0 || amountCol < 0) {
+      Debug.error("Dashboard.calculateManualAdjustments", "adjustments tab missing date/amount columns");
+      return 0;
+    }
+    
     var total = 0;
     for (var r = 1; r < data.length; r++) {
-      var date = String(data[r][1] || "");
-      var amount = Number(data[r][3]) || 0;
+      var rawDate = data[r][dateCol];
+      var date = "";
+      if (rawDate instanceof Date) {
+        date = Utilities.formatDate(rawDate, Session.getScriptTimeZone(), "yyyy-MM-dd");
+      } else {
+        date = String(rawDate || "");
+      }
+      var amount = Number(data[r][amountCol]) || 0;
       if (date >= startDate && date <= endDate) {
         total += amount;
       }
@@ -323,18 +341,27 @@ function onEdit(e) {
   if (!e || !e.range) return;
 
   var sheet = e.range.getSheet();
-  if (sheet.getName() !== DASHBOARD.TAB) return;
+  var tabName = sheet.getName();
 
-  var row = e.range.getRow();
-  var col = e.range.getColumn();
+  // Dashboard inputs: B4, B5, B19:B23, B26:B27
+  if (tabName === DASHBOARD.TAB) {
+    var row = e.range.getRow();
+    var col = e.range.getColumn();
 
-  // Only react to edits in column B (2) of the input rows
-  if (col !== 2) return;
+    if (col !== 2) return;
 
-  // Input rows: B4, B5, B19:B23, B26:B27
-  var inputRows = [4, 5, 19, 20, 21, 22, 23, 26, 27];
-  if (inputRows.indexOf(row) < 0) return;
+    var inputRows = [4, 5, 19, 20, 21, 22, 23, 26, 27];
+    if (inputRows.indexOf(row) < 0) return;
 
-  Debug.log("Dashboard.onEdit", "Input cell B" + row + " changed — auto-refreshing dashboard");
-  DASHBOARD.refresh();
+    Debug.log("Dashboard.onEdit", "Input cell B" + row + " changed — auto-refreshing dashboard");
+    DASHBOARD.refresh();
+    return;
+  }
+
+  // Any edit in adjustments tab → refresh dashboard
+  if (tabName === "adjustments") {
+    Debug.log("Dashboard.onEdit", "Adjustments tab edited — auto-refreshing dashboard");
+    DASHBOARD.refresh();
+    return;
+  }
 }

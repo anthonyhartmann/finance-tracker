@@ -1,13 +1,13 @@
 /**
- * Manual.gs — Manual adjustments tab: create, append, and manage off-budget entries.
+ * Manual.gs — Manual adjustments tab: dead simple.
  *
- * Columns: id, date, description, amount, category, status, notes, created_at
+ * Columns: date, description, amount
  * Positive amount = money in; Negative = money out.
  */
 
 const MANUAL = {
   TAB: "adjustments",
-  HEADERS: ["id", "date", "description", "amount", "category", "status", "notes", "created_at"],
+  HEADERS: ["date", "description", "amount"],
 
   /**
    * Ensure the adjustments tab exists with proper headers.
@@ -25,26 +25,22 @@ const MANUAL = {
   },
 
   /**
-   * Append a manual adjustment row.
+   * Append a manual adjustment row. Date defaults to today.
    *
-   * @param {string} date        YYYY-MM-DD
-   * @param {string} description What happened
    * @param {number} amount      Positive = in, Negative = out
-   * @param {string} category    Cash, Refund, Reimbursement, etc.
-   * @param {string} status      pending, cleared, reconciled
-   * @param {string} notes       Optional extra context
+   * @param {string} description What happened (optional)
+   * @param {string} date        YYYY-MM-DD (optional, defaults to today)
    */
-  addAdjustment: function (date, description, amount, category, status, notes) {
+  addAdjustment: function (amount, description, date) {
     var sheet = this.init();
-    var id = sheet.getLastRow(); // simple row-number id
-    var createdAt = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "yyyy-MM-dd HH:mm:ss");
+    date = date || Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "yyyy-MM-dd");
+    description = description || "";
 
-    var row = [id, date, description, amount, category || "", status || "", notes || "", createdAt];
+    var row = [date, description, amount];
     sheet.appendRow(row);
 
-    Debug.log("Manual.addAdjustment", "Added row " + id + ": " + description + " ($" + amount + ")");
+    Debug.log("Manual.addAdjustment", "Added: " + description + " ($" + amount + ") on " + date);
 
-    // Auto-refresh dashboard if it's open
     try {
       DASHBOARD.refresh();
     } catch (e) {
@@ -57,6 +53,6 @@ function initAdjustments() {
   MANUAL.init();
 }
 
-function addAdjustment(date, description, amount, category, status, notes) {
-  MANUAL.addAdjustment(date, description, amount, category, status, notes);
+function addAdjustment(amount, description, date) {
+  MANUAL.addAdjustment(amount, description, date);
 }
