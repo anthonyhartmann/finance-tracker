@@ -41,6 +41,7 @@ const DASHBOARD = {
       ["Non-Standard Rate ($)", 115, "Other interview types"],
       ["Cancellation Rate ($)", 75, "No-show / late cancellation"],
       ["Tax Scalar", 0.7, "Applied to gross"],
+      ["Count Upcoming Interviews", 1, "0 = past only, 1 = include upcoming"],
       ["", "", ""],
       ["Manual Inputs (resets monthly)", "", ""],
       ["# Non-Standard Interviews", 0, "Transforms $85 → $115"],
@@ -56,7 +57,7 @@ const DASHBOARD = {
     sheet.getRange("A7").setFontWeight("bold");
     sheet.getRange("A15").setFontWeight("bold");
     sheet.getRange("A18").setFontWeight("bold");
-    sheet.getRange("A24").setFontWeight("bold");
+    sheet.getRange("A25").setFontWeight("bold");
     
     sheet.getRange("B5").setNumberFormat("0");
     sheet.getRange("B4").setNumberFormat("@");
@@ -64,7 +65,8 @@ const DASHBOARD = {
     sheet.getRange("B16").setNumberFormat("#,##0");
     sheet.getRange("B19:B21").setNumberFormat("0");
     sheet.getRange("B22").setNumberFormat("0.00");
-    sheet.getRange("B25:B26").setNumberFormat("0");
+    sheet.getRange("B23").setNumberFormat("0");
+    sheet.getRange("B26:B27").setNumberFormat("0");
     
     sheet.setColumnWidth(1, 220);
     sheet.setColumnWidth(2, 120);
@@ -115,8 +117,9 @@ const DASHBOARD = {
       nonStandardRate: Number(sheet.getRange("B20").getValue()) || 115,
       cancellationRate: Number(sheet.getRange("B21").getValue()) || 75,
       taxScalar: Number(sheet.getRange("B22").getValue()) || 0.7,
-      nonStandardCount: Number(sheet.getRange("B25").getValue()) || 0,
-      cancellationCount: Number(sheet.getRange("B26").getValue()) || 0
+      countUpcoming: Number(sheet.getRange("B23").getValue()) !== 0,
+      nonStandardCount: Number(sheet.getRange("B26").getValue()) || 0,
+      cancellationCount: Number(sheet.getRange("B27").getValue()) || 0
     };
     
     var spend = this.calculateSpend(startStr, endStr);
@@ -149,8 +152,8 @@ const DASHBOARD = {
       return;
     }
     
-    sheet.getRange("B25").setValue(0);
     sheet.getRange("B26").setValue(0);
+    sheet.getRange("B27").setValue(0);
     props.setProperty("LAST_DASHBOARD_MONTH", currentMonth);
     
     Debug.log("Dashboard.maybeResetManualInputs", "Month changed from " + lastMonth + " to " + currentMonth + " — reset manual inputs");
@@ -224,6 +227,7 @@ const DASHBOARD = {
     var nonStandardRate = settings.nonStandardRate || 115;
     var cancellationRate = settings.cancellationRate || 75;
     var taxScalar = settings.taxScalar || 0.7;
+    var countUpcoming = settings.countUpcoming !== false;
     var nonStandardCount = settings.nonStandardCount || 0;
     var cancellationCount = settings.cancellationCount || 0;
     
@@ -237,6 +241,7 @@ const DASHBOARD = {
     var header = [];
     for (var h = 0; h < data[0].length; h++) header.push(String(data[0][h]));
     var dateCol = header.indexOf("date");
+    var statusCol = header.indexOf("status");
     if (dateCol < 0) {
       Debug.error("Dashboard.calculateInterviewIncome", "interview_income tab missing date column");
       return 0;
@@ -251,9 +256,12 @@ const DASHBOARD = {
       } else {
         date = String(rawDate || "");
       }
-      if (date >= startDate && date <= endDate) {
-        totalInterviews++;
-      }
+      if (date < startDate || date > endDate) continue;
+      
+      var status = statusCol >= 0 ? String(data[r][statusCol] || "") : "";
+      if (!countUpcoming && status === "Upcoming") continue;
+      
+      totalInterviews++;
     }
     
     var cappedNonStandard = Math.min(nonStandardCount, totalInterviews);
@@ -267,6 +275,7 @@ const DASHBOARD = {
       ", standard: " + standardCount + 
       ", non-standard: " + cappedNonStandard + 
       ", cancellations: " + cancellationCount + 
+      ", countUpcoming: " + countUpcoming +
       ", gross: " + gross + 
       ", net: " + net);
     
