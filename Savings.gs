@@ -16,29 +16,21 @@ const SAVINGS = {
   BANK_ITEMS: ["ally", "bofa", "fidelity"],
   EXCLUDE_KEYWORDS: ["venmo", "zelle", "cash app", "paypal", "cashapp", "atm", "withdrawal", "withdrwl"],
 
-  /**
-   * Backfill savings data. Creates rows for ALL months in range.
-   * Preserves manual columns (F, G, H) — only updates auto columns (C, D, E).
-   */
   backfill: function (startDate, endDate) {
     startDate = startDate || "2026-01-01";
     endDate = endDate || Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "yyyy-MM-dd");
 
     Debug.log("Savings.backfill", "Range: " + startDate + " to " + endDate);
 
-    // 1) Read existing sheet data to preserve manual columns
     var sheet = this.ensureTab();
     var existing = this.readExisting(sheet);
 
-    // 2) Fetch auto-detected transactions
     var allTx = this.fetchAllTransactions(startDate, endDate);
     var allInvTx = this.fetchAllInvestmentTransactions(startDate, endDate);
     Debug.log("Savings.backfill", "Fetched " + allTx.length + " bank tx, " + allInvTx.length + " investment tx");
 
-    // 3) Build month map for ALL months in range
     var byMonth = this.buildMonthMap(startDate, endDate, existing);
 
-    // 4) Overlay bank transactions
     for (var i = 0; i < allTx.length; i++) {
       var t = allTx[i];
       var date = t.date || t.authorized_date || "";
@@ -69,7 +61,6 @@ const SAVINGS = {
       }
     }
 
-    // 5) Overlay investment transactions (401k)
     for (var j = 0; j < allInvTx.length; j++) {
       var inv = allInvTx[j];
       var invDate = inv.date || "";
@@ -88,15 +79,10 @@ const SAVINGS = {
       }
     }
 
-    // 6) Write to sheet (preserves manual columns)
     this.writeSheet(sheet, byMonth);
-
     Debug.log("Savings.backfill", "Wrote " + Object.keys(byMonth).length + " month(s)");
   },
 
-  /**
-   * Read existing sheet data to preserve manual columns.
-   */
   readExisting: function (sheet) {
     var existing = {};
     var data = sheet.getDataRange().getValues();
@@ -112,21 +98,18 @@ const SAVINGS = {
     return existing;
   },
 
-  /**
-   * Build a map of ALL months from startDate to endDate.
-   */
   buildMonthMap: function (startDate, endDate, existing) {
     var map = {};
-    var start = new Date(startDate + "-01");
-    var end = new Date(endDate.substring(0, 7) + "-01");
+    var startParts = startDate.split("-");
+    var endParts = endDate.substring(0, 7).split("-");
+    var start = new Date(Number(startParts[0]), Number(startParts[1]) - 1, 1);
+    var end = new Date(Number(endParts[0]), Number(endParts[1]) - 1, 1);
 
     while (start <= end) {
       var month = Utilities.formatDate(start, Session.getScriptTimeZone(), "yyyy-MM");
       var prev = existing[month] || {};
       map[month] = {
-        transfers: 0,
-        retirement: 0,
-        ally: 0,
+        transfers: 0, retirement: 0, ally: 0,
         manual_transfers: prev.manual_transfers || 0,
         manual_retirement: prev.manual_retirement || 0,
         manual_ally: prev.manual_ally || 0,
@@ -137,9 +120,6 @@ const SAVINGS = {
     return map;
   },
 
-  /**
-   * Write data to sheet, preserving manual columns.
-   */
   writeSheet: function (sheet, byMonth) {
     var months = Object.keys(byMonth).sort();
     var rows = [];
@@ -158,7 +138,6 @@ const SAVINGS = {
     }
     sheet.setFrozenRows(1);
 
-    // Format details column
     var detailsCol = this.HEADERS.length;
     sheet.getRange(1, detailsCol, rows.length + 1, 1).setWrapStrategy(SpreadsheetApp.WrapStrategy.WRAP);
     sheet.setColumnWidth(detailsCol, 300);
@@ -268,10 +247,6 @@ function backfillSavingsYear() {
   SAVINGS.backfill("2025-07-01");
 }
 
-/**
- * One-off: populate manual historical adjustments.
- * Run AFTER backfillSavingsYear().
- */
 function populateManualAdjustments() {
   var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SAVINGS.TAB);
   if (!sheet) {
