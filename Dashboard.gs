@@ -1,12 +1,12 @@
 /**
  * Dashboard.gs — The 3 numbers: Actual Spend, Net Income, Daily Budget
- * 
+ *
  * All formulas read from the transactions tab and respect the month selector.
  */
 
 const DASHBOARD = {
   TAB: "dashboard",
-  
+
   /**
    * Initialize the dashboard tab with all cells and headers.
    */
@@ -17,7 +17,7 @@ const DASHBOARD = {
       sheet = ss.insertSheet(this.TAB);
     }
     sheet.clear();
-    
+
     var layout = [
       ["Finance Tracker Dashboard", "", ""],
       ["", "", ""],
@@ -32,9 +32,6 @@ const DASHBOARD = {
       ["Net Income", "", "9000 + interviews + manual - spend - recurring"],
       ["", "", ""],
       ["Daily Budget", "", "(Net Income - target) / days remaining"],
-      ["", "", ""],
-      ["Balances (live from Plaid)", "", ""],
-      ["Total Available Balance", "", "Sum of all account balances"],
       ["Upcoming Bills (unpaid)", "", "From recurring tab"],
       ["Include Upcoming in Spend", 1, "0 = actual only, 1 = include expected bills"],
       ["", "", ""],
@@ -49,32 +46,31 @@ const DASHBOARD = {
       ["# Non-Standard Interviews", 0, "Transforms $85 → $115"],
       ["# Late Cancellations", 0, "Manual entry — event removed from calendar"],
     ];
-    
+
     for (var r = 0; r < layout.length; r++) {
       sheet.getRange(r + 1, 1, 1, 3).setValues([layout[r]]);
     }
-    
+
     sheet.getRange("A1").setFontWeight("bold");
     sheet.getRange("A3").setFontWeight("bold");
     sheet.getRange("A7").setFontWeight("bold");
-    sheet.getRange("A15").setFontWeight("bold");
-    sheet.getRange("A19").setFontWeight("bold");
-    sheet.getRange("A27").setFontWeight("bold");
-    
+    sheet.getRange("A14").setFontWeight("bold");
+    sheet.getRange("A17").setFontWeight("bold");
+    sheet.getRange("A24").setFontWeight("bold");
+
     sheet.getRange("B5").setNumberFormat("0");
     sheet.getRange("B4").setNumberFormat("@");
     sheet.getRange("B8:B13").setNumberFormat("#,##0");
-    sheet.getRange("B16:B17").setNumberFormat("#,##0");
-    sheet.getRange("B18").setNumberFormat("0");
-    sheet.getRange("B21:B23").setNumberFormat("0");
-    sheet.getRange("B24").setNumberFormat("0.00");
-    sheet.getRange("B25").setNumberFormat("0");
-    sheet.getRange("B28:B29").setNumberFormat("0");
-    
+    sheet.getRange("B14:B15").setNumberFormat("#,##0");
+    sheet.getRange("B18:B20").setNumberFormat("0");
+    sheet.getRange("B21").setNumberFormat("0.00");
+    sheet.getRange("B22").setNumberFormat("0");
+    sheet.getRange("B25:B26").setNumberFormat("0");
+
     sheet.setColumnWidth(1, 220);
     sheet.setColumnWidth(2, 120);
     sheet.setColumnWidth(3, 300);
-    
+
     Debug.log("Dashboard.init", "Dashboard tab created");
     this.refresh();
   },
@@ -88,75 +84,75 @@ const DASHBOARD = {
       this.init();
       sheet = ss.getSheetByName(this.TAB);
     }
-    
+
     var month = sheet.getRange("B4").getValue();
     var target = Number(sheet.getRange("B5").getValue()) || 4000;
-    
+
     if (!month || typeof month !== "string" || month.indexOf("-") === -1) {
       Debug.log("Dashboard.refresh", "Invalid month format in B4. Use YYYY-MM.");
       return;
     }
-    
+
     // Reset manual inputs if month rolled over
     this.maybeResetManualInputs(sheet, month);
-    
+
     var parts = month.split("-");
     var year = parseInt(parts[0]);
     var monthNum = parseInt(parts[1]);
-    
+
     var monthStart = new Date(year, monthNum - 1, 1);
     var monthEnd = new Date(year, monthNum, 0);
     var today = new Date();
     var daysRemaining = Math.max(0, Math.ceil((monthEnd.getTime() - today.getTime()) / (1000 * 60 * 60 * 24)));
-    
+
     var startStr = Utilities.formatDate(monthStart, Session.getScriptTimeZone(), "yyyy-MM-dd");
     var endStr = Utilities.formatDate(monthEnd, Session.getScriptTimeZone(), "yyyy-MM-dd");
-    
+
     Debug.log("Dashboard.refresh", "Calculating for: " + startStr + " to " + endStr);
-    
+
     // Read interview settings
     var settings = {
-      standardRate: Number(sheet.getRange("B21").getValue()) || 85,
-      nonStandardRate: Number(sheet.getRange("B22").getValue()) || 115,
-      cancellationRate: Number(sheet.getRange("B23").getValue()) || 75,
-      taxScalar: Number(sheet.getRange("B24").getValue()) || 0.7,
-      countUpcoming: Number(sheet.getRange("B25").getValue()) !== 0,
-      nonStandardCount: Number(sheet.getRange("B28").getValue()) || 0,
-      cancellationCount: Number(sheet.getRange("B29").getValue()) || 0
+      standardRate: Number(sheet.getRange("B18").getValue()) || 85,
+      nonStandardRate: Number(sheet.getRange("B19").getValue()) || 115,
+      cancellationRate: Number(sheet.getRange("B20").getValue()) || 75,
+      taxScalar: Number(sheet.getRange("B21").getValue()) || 0.7,
+      countUpcoming: Number(sheet.getRange("B22").getValue()) !== 0,
+      nonStandardCount: Number(sheet.getRange("B25").getValue()) || 0,
+      cancellationCount: Number(sheet.getRange("B26").getValue()) || 0
     };
-    
+
     var spend = this.calculateSpend(startStr, endStr);
     sheet.getRange("B8").setValue(spend);
-    
+
     var interviewIncome = this.calculateInterviewIncome(startStr, endStr, settings);
     sheet.getRange("B9").setValue(interviewIncome);
-    
+
     var manualAdjustments = this.calculateManualAdjustments(startStr, endStr);
     sheet.getRange("B10").setValue(manualAdjustments);
-    
+
     // Recurring bills
     var recurring = RECURRING.calculateUpcoming(year, monthNum, today);
     var upcomingRecurring = recurring.upcoming;
-    var includeRecurring = Number(sheet.getRange("B18").getValue()) !== 0;
-    
-    sheet.getRange("B17").setValue(upcomingRecurring);
-    sheet.getRange("C17").setValue(recurring.items.map(function(i) {
+    var includeRecurring = Number(sheet.getRange("B15").getValue()) !== 0;
+
+    sheet.getRange("B14").setValue(upcomingRecurring);
+    sheet.getRange("C14").setValue(recurring.items.map(function(i) {
       var label = i.merchant.charAt(0).toUpperCase() + i.merchant.slice(1);
       if (i.remaining > 1 && i.frequency === "weekly") {
         return label + " " + i.remaining + "x ($" + i.upcomingAmount + ")";
       }
       return label + " ($" + i.upcomingAmount + ")";
     }).join(", ") || "None");
-    
+
     // Net income = 9000 + interviews + manual - spend - (recurring if enabled)
     var totalSpend = spend + (includeRecurring ? upcomingRecurring : 0);
     var netIncome = 9000 + interviewIncome + manualAdjustments - totalSpend;
     sheet.getRange("B11").setValue(netIncome);
-    
+
     var dailyBudget = daysRemaining > 0 ? (netIncome - target) / daysRemaining : 0;
     sheet.getRange("B13").setValue(Math.round(dailyBudget));
     sheet.getRange("C13").setValue("Target: $" + target + ", " + daysRemaining + " days left");
-    
+
     Debug.log("Dashboard.refresh", "Spend: $" + spend + " | Recurring: $" + upcomingRecurring + " | Net: $" + netIncome + " | Daily: $" + Math.round(dailyBudget));
   },
 
@@ -167,20 +163,20 @@ const DASHBOARD = {
   maybeResetManualInputs: function (sheet, currentMonth) {
     var props = PropertiesService.getScriptProperties();
     var lastMonth = props.getProperty("LAST_DASHBOARD_MONTH");
-    
+
     if (lastMonth && lastMonth === currentMonth) {
       return;
     }
-    
+
     // Snapshot the month we're leaving, then reset inputs
     if (lastMonth) {
       SNAPSHOT.autoSnapshotOnRollover(lastMonth);
     }
-    
-    sheet.getRange("B28").setValue(0);
-    sheet.getRange("B29").setValue(0);
+
+    sheet.getRange("B25").setValue(0);
+    sheet.getRange("B26").setValue(0);
     props.setProperty("LAST_DASHBOARD_MONTH", currentMonth);
-    
+
     Debug.log("Dashboard.maybeResetManualInputs", "Month changed from " + lastMonth + " to " + currentMonth + " — reset manual inputs");
   },
 
@@ -192,7 +188,7 @@ const DASHBOARD = {
     var ss = SpreadsheetApp.getActiveSpreadsheet();
     var sheet = ss.getSheetByName("transactions");
     if (!sheet) return 0;
-    
+
     var data = sheet.getDataRange().getValues();
     var total = 0;
 
@@ -214,7 +210,7 @@ const DASHBOARD = {
       var rawDate = data[r][dateCol];
       var amount = Number(data[r][amountCol]) || 0;
       var category = catCol >= 0 ? String(data[r][catCol] || "") : "";
-      
+
       // Dates come from getValues() as Date objects — format them for comparison
       var date = "";
       if (rawDate instanceof Date) {
@@ -222,23 +218,23 @@ const DASHBOARD = {
       } else {
         date = String(rawDate || "");
       }
-      
+
       if (date < startDate || date > endDate) continue;
       matchedDate++;
-      
+
       // Skip transfers (Plaid categories: TRANSFER, LOAN_PAYMENTS)
       if (category === "TRANSFER" || category === "LOAN_PAYMENTS") { matchedCategory++; continue; }
-      
+
       if (amount > 0) {
         total += amount;
         matchedAmount++;
       }
     }
     Debug.log("Dashboard.calculateSpend", "Matched: " + matchedDate + " in date range, " + matchedCategory + " skipped as transfers, " + matchedAmount + " with positive amount");
-    
+
     return total;
   },
-  
+
   /**
    * Calculate interview income from the interview_income tab.
    * All calendar events are treated as standard ($85) by default.
@@ -255,14 +251,14 @@ const DASHBOARD = {
     var countUpcoming = settings.countUpcoming !== false;
     var nonStandardCount = settings.nonStandardCount || 0;
     var cancellationCount = settings.cancellationCount || 0;
-    
+
     var ss = SpreadsheetApp.getActiveSpreadsheet();
     var sheet = ss.getSheetByName("interview_income");
     if (!sheet) return 0;
-    
+
     var data = sheet.getDataRange().getValues();
     if (data.length < 2) return 0;
-    
+
     var header = [];
     for (var h = 0; h < data[0].length; h++) header.push(String(data[0][h]));
     var dateCol = header.indexOf("date");
@@ -271,7 +267,7 @@ const DASHBOARD = {
       Debug.error("Dashboard.calculateInterviewIncome", "interview_income tab missing date column");
       return 0;
     }
-    
+
     var totalInterviews = 0;
     for (var r = 1; r < data.length; r++) {
       var rawDate = data[r][dateCol];
@@ -282,31 +278,31 @@ const DASHBOARD = {
         date = String(rawDate || "");
       }
       if (date < startDate || date > endDate) continue;
-      
+
       var status = statusCol >= 0 ? String(data[r][statusCol] || "") : "";
       if (!countUpcoming && status === "Upcoming") continue;
-      
+
       totalInterviews++;
     }
-    
+
     var cappedNonStandard = Math.min(nonStandardCount, totalInterviews);
     var standardCount = totalInterviews - cappedNonStandard;
-    
+
     var gross = standardCount * standardRate + cappedNonStandard * nonStandardRate + cancellationCount * cancellationRate;
     var net = Math.round(gross * taxScalar * 100) / 100;
-    
-    Debug.log("Dashboard.calculateInterviewIncome", 
-      "Interviews: " + totalInterviews + 
-      ", standard: " + standardCount + 
-      ", non-standard: " + cappedNonStandard + 
-      ", cancellations: " + cancellationCount + 
+
+    Debug.log("Dashboard.calculateInterviewIncome",
+      "Interviews: " + totalInterviews +
+      ", standard: " + standardCount +
+      ", non-standard: " + cappedNonStandard +
+      ", cancellations: " + cancellationCount +
       ", countUpcoming: " + countUpcoming +
-      ", gross: " + gross + 
+      ", gross: " + gross +
       ", net: " + net);
-    
+
     return net;
   },
-  
+
   /**
    * Calculate manual adjustments.
    * Reads columns by header name (date, amount).
@@ -315,10 +311,10 @@ const DASHBOARD = {
     var ss = SpreadsheetApp.getActiveSpreadsheet();
     var sheet = ss.getSheetByName("adjustments");
     if (!sheet) return 0;
-    
+
     var data = sheet.getDataRange().getValues();
     if (data.length < 2) return 0;
-    
+
     var header = [];
     for (var h = 0; h < data[0].length; h++) header.push(String(data[0][h]));
     var dateCol = header.indexOf("date");
@@ -327,7 +323,7 @@ const DASHBOARD = {
       Debug.error("Dashboard.calculateManualAdjustments", "adjustments tab missing date/amount columns");
       return 0;
     }
-    
+
     var total = 0;
     for (var r = 1; r < data.length; r++) {
       var rawDate = data[r][dateCol];
@@ -368,14 +364,14 @@ function onEdit(e) {
   var sheet = e.range.getSheet();
   var tabName = sheet.getName();
 
-  // Dashboard inputs: B4, B5, B18, B21:B25, B28:B29
+  // Dashboard inputs: B4, B5, B15, B18:B22, B25:B26
   if (tabName === DASHBOARD.TAB) {
     var row = e.range.getRow();
     var col = e.range.getColumn();
 
     if (col !== 2) return;
 
-    var inputRows = [4, 5, 18, 21, 22, 23, 24, 25, 28, 29];
+    var inputRows = [4, 5, 15, 18, 19, 20, 21, 22, 25, 26];
     if (inputRows.indexOf(row) < 0) return;
 
     Debug.log("Dashboard.onEdit", "Input cell B" + row + " changed — auto-refreshing dashboard");
