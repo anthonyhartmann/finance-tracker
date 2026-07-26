@@ -4,7 +4,7 @@
  * Uses Plaid /transactions/get (not sync) to backfill arbitrary date ranges.
  *
  * Detects per month:
- *   + Transfers from checking → savings (EXCLUDES Venmo, Zelle, Cash App, PayPal)
+ *   + Transfers from checking → savings (EXCLUDES P2P, ATM withdrawals)
  *   + 401k contributions (Fidelity — auto or manual fallback)
  *   − Ally outflows
  *
@@ -16,8 +16,8 @@ const SAVINGS = {
   TAB: "savings_tracker",
   HEADERS: ["month", "transfers_to_savings", "retirement_401k", "ally_outflows", "net_savings", "details"],
 
-  // Peer-to-peer payment keywords to EXCLUDE from "transfers to savings"
-  P2P_KEYWORDS: ["venmo", "zelle", "cash app", "paypal", "cashapp"],
+  // Exclusion keywords for "transfers to savings"
+  EXCLUDE_KEYWORDS: ["venmo", "zelle", "cash app", "paypal", "cashapp", "atm", "withdrawal", "withdrwl"],
 
   backfill: function (startDate, endDate) {
     startDate = startDate || "2026-01-01";
@@ -48,12 +48,11 @@ const SAVINGS = {
       var amount = Number(t.amount) || 0;
 
       // 1) Transfers FROM checking → savings
-      //    Must be TRANSFER category, from checking, amount > 0, NOT a P2P payment
       var isTransfer = category.indexOf("TRANSFER") >= 0;
       var isChecking = accountSubtype === "checking" || accountName.indexOf("checking") >= 0;
-      var isP2P = this.isP2P(name + " " + merchant);
+      var isExcluded = this.isExcluded(name + " " + merchant);
 
-      if (isTransfer && isChecking && amount > 0 && !isP2P) {
+      if (isTransfer && isChecking && amount > 0 && !isExcluded) {
         byMonth[month].transfers += amount;
         byMonth[month].details.push(date + ": Transfer to savings $" + amount + " (" + name + ")");
         continue;
@@ -107,10 +106,10 @@ const SAVINGS = {
     Debug.log("Savings.backfill", "Retirement total: " + Object.keys(byMonth).map(function(m) { return byMonth[m].retirement; }).reduce(function(a,b){return a+b;}, 0));
   },
 
-  isP2P: function (text) {
+  isExcluded: function (text) {
     text = text.toLowerCase();
-    for (var i = 0; i < this.P2P_KEYWORDS.length; i++) {
-      if (text.indexOf(this.P2P_KEYWORDS[i]) >= 0) return true;
+    for (var i = 0; i < this.EXCLUDE_KEYWORDS.length; i++) {
+      if (text.indexOf(this.EXCLUDE_KEYWORDS[i]) >= 0) return true;
     }
     return false;
   },
