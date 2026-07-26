@@ -485,6 +485,13 @@ function onEdit(e) {
     var inputRows = [4, 5, 15, 23, 24, 25, 26, 27, 30, 31];
     if (inputRows.indexOf(row) < 0) return;
 
+    // Debounce: skip refresh if one ran < 2s ago (writes from maybeResetManualInputs trigger onEdit)
+    var props = PropertiesService.getScriptProperties();
+    var lastTs = Number(props.getProperty("_DASH_REFRESH_TS")) || 0;
+    var nowTs = new Date().getTime();
+    if (nowTs - lastTs < 2000) return;
+    props.setProperty("_DASH_REFRESH_TS", String(nowTs));
+
     Debug.log("Dashboard.onEdit", "Input cell B" + row + " changed — auto-refreshing dashboard");
     DASHBOARD.refresh();
     return;
