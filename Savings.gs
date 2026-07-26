@@ -192,3 +192,28 @@ function backfillSavings() {
 function backfillSavingsYear() {
   SAVINGS.backfill("2025-07-01");
 }
+
+/**
+ * Diagnostic: try /investments/transactions/get on Fidelity.
+ * Run this to see if Plaid exposes 401k contribution data.
+ */
+function testFidelityInvestments() {
+  var token = PLAID.getAccessToken("fidelity");
+  if (!token) {
+    Debug.error("testFidelityInvestments", "No fidelity access_token found");
+    return;
+  }
+
+  try {
+    var data = PLAID._post("/investments/transactions/get", {
+      access_token: token,
+      start_date: "2026-01-01",
+      end_date: "2026-07-25",
+      options: { count: 100 }
+    });
+    Debug.logRaw("testFidelityInvestments", data);
+    Debug.log("testFidelityInvestments", "Investment transactions found: " + (data.investment_transactions || []).length);
+  } catch (e) {
+    Debug.error("testFidelityInvestments", "Failed: " + e.message);
+  }
+}
