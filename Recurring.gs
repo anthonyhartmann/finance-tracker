@@ -1,16 +1,18 @@
 /**
- * Recurring.gs — Track expected monthly bills.
+ * Recurring.gs — Track expected monthly/weekly bills.
  *
- * Columns: merchant_name, amount, day_of_month, notes
+ * Columns: merchant_name, amount, frequency, day_of_month, notes
  *
- * The dashboard shows "Upcoming Bills" = expected bills whose day_of_month
- * is >= today AND whose merchant hasn't already posted a transaction this month.
- * No manual marking required — matching is automatic by merchant name.
+ * Matching: scans this month's transactions for the merchant name (case-insensitive,
+ * partial match in merchant_name or name fields).
+ *
+ * Monthly: upcoming if 0 matches found this month.
+ * Weekly:  expected = 4 per month. upcoming = (4 - matches) * amount.
  */
 
 const RECURRING = {
   TAB: "recurring",
-  HEADERS: ["merchant_name", "amount", "day_of_month", "notes"],
+  HEADERS: ["merchant_name", "amount", "frequency", "day_of_month", "notes"],
 
   init: function () {
     var ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -26,7 +28,10 @@ const RECURRING = {
 
   /**
    * Calculate upcoming recurring bills for the current month.
-   * Excludes bills whose merchant already posted a transaction this month.
+   * @param {number} year
+   * @param {number} monthNum  1-12
+   * @param {Date}   today
+   * @returns {Object} { upcoming: number, items: [] }
    */
   calculateUpcoming: function (year, monthNum, today) {
     var ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -40,52 +45,56 @@ const RECURRING = {
     for (var h = 0; h < data[0].length; h++) header.push(String(data[0][h]));
     var merchCol = header.indexOf("merchant_name");
     var amtCol = header.indexOf("amount");
-    var dayCol = header.indexOf("day_of_month");
-    if (merchCol < 0 || amtCol < 0 || dayCol < 0) {
+    var freqCol = header.indexOf("frequency");
+    if (merchCol < 0 || amtCol < 0 || freqCol < 0) {
       Debug.error("Recurring.calculateUpcoming", "recurring tab missing required columns");
       return { upcoming: 0, items: [] };
     }
 
-    // Build set of merchant names already seen in transactions this month
-    var paidMerchants = this.findPaidMerchants(year, monthNum);
+    var monthStart = Utilities.formatDate(new Date(year, monthNum - 1, 1), Session.getScriptTimeZone(), "yyyy-MM-dd");
+    var monthEnd = Utilities.formatDate(new Date(year, monthNum, 0), Session.getScriptTimeZone(), "yyyy-MM-dd");
+    var txData = this.getTransactionData(monthStart, monthEnd);
 
     var upcomingTotal = 0;
     var upcomingItems = [];
+
     for (var r = 1; r < data.length; r++) {
       var merchant = String(data[r][merchCol] || "").toLowerCase().trim();
       var amount = Number(data[r][amtCol]) || 0;
-      var day = Number(data[r][dayCol]) || 0;
+      var frequency = String(data[r][freqCol] || "").toLowerCase().trim();
 
-      if (day < 1 || day > 31 || amount <= 0) continue;
-      if (day < today.getDate()) continue; // already passed
+      if (!merchant || amount <= 0) continue;
 
-      // Check if this merchant already posted this month
-      var alreadyPaid = false;
-      for (var p = 0; p < paidMerchants.length; p++) {
-        if (paidMerchants[p].indexOf(merchant) >= 0 || merchant.indexOf(paidMerchants[p]) >= 0) {
-          alreadyPaid = true;
-          break;
-        }
+      var postedCount = this.countMatches(merchant, txData);
+      var expectedCount = frequency === "weekly" ? 4 : 1;
+      var remainingCount = Math.max(0, expectedCount - postedCount);
+      var upcomingAmount = Math.round(remainingCount * amount * 100) / 100;
+
+      if (upcomingAmount > 0) {
+        upcomingTotal += upcomingAmount;
+        upcomingItems.push({
+          merchant: merchant,
+          amount: amount,
+          frequency: frequency,
+          remaining: remainingCount,
+          upcomingAmount: upcomingAmount
+        });
       }
-      if (alreadyPaid) continue;
-
-      upcomingTotal += amount;
-      upcomingItems.push({ merchant: merchant, amount: amount, day: day });
     }
 
-    Debug.log("Recurring.calculateUpcoming", "Upcoming bills: " + upcomingItems.length + ", total: " + upcomingTotal);
+    Debug.log("Recurring.calculateUpcoming", "Upcoming: $" + upcomingTotal + " from " + upcomingItems.length + " bill(s)");
     return { upcoming: upcomingTotal, items: upcomingItems };
   },
 
   /**
-   * Find merchant names from transactions that posted this month.
+   * Load this month's transaction merchant names for matching.
    */
-  findPaidMerchants: function (year, monthNum) {
+  getTransactionData: function (startDate, endDate) {
     var ss = SpreadsheetApp.getActiveSpreadsheet();
-    var txSheet = ss.getSheetByName("transactions");
-    if (!txSheet) return [];
+    var sheet = ss.getSheetByName("transactions");
+    if (!sheet) return [];
 
-    var data = txSheet.getDataRange().getValues();
+    var data = sheet.getDataRange().getValues();
     if (data.length < 2) return [];
 
     var header = [];
@@ -95,10 +104,7 @@ const RECURRING = {
     var nameCol = header.indexOf("name");
     if (dateCol < 0) return [];
 
-    var monthStart = Utilities.formatDate(new Date(year, monthNum - 1, 1), Session.getScriptTimeZone(), "yyyy-MM-dd");
-    var monthEnd = Utilities.formatDate(new Date(year, monthNum, 0), Session.getScriptTimeZone(), "yyyy-MM-dd");
-
-    var merchants = [];
+    var results = [];
     for (var r = 1; r < data.length; r++) {
       var rawDate = data[r][dateCol];
       var date = "";
@@ -107,15 +113,30 @@ const RECURRING = {
       } else {
         date = String(rawDate || "");
       }
-      if (date < monthStart || date > monthEnd) continue;
+      if (date < startDate || date > endDate) continue;
 
-      var m = String(data[r][merchCol] || "").toLowerCase().trim();
-      var n = String(data[r][nameCol] || "").toLowerCase().trim();
-      if (m) merchants.push(m);
-      if (n && n !== m) merchants.push(n);
+      results.push({
+        merchant_name: String(data[r][merchCol] || ""),
+        name: String(data[r][nameCol] || "")
+      });
     }
+    return results;
+  },
 
-    return merchants;
+  /**
+   * Count how many transactions match the given merchant name.
+   */
+  countMatches: function (searchTerm, txData) {
+    var count = 0;
+    var term = searchTerm.toLowerCase().trim();
+    for (var i = 0; i < txData.length; i++) {
+      var merchant = String(txData[i].merchant_name || "").toLowerCase();
+      var name = String(txData[i].name || "").toLowerCase();
+      if (merchant.indexOf(term) >= 0 || name.indexOf(term) >= 0) {
+        count++;
+      }
+    }
+    return count;
   }
 };
 
