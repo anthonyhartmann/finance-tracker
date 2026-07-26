@@ -143,6 +143,7 @@ const DASHBOARD = {
 
   /**
    * Reset manual inputs to 0 when the displayed month changes.
+   * Also auto-snapshots the previous month's data before resetting.
    */
   maybeResetManualInputs: function (sheet, currentMonth) {
     var props = PropertiesService.getScriptProperties();
@@ -150,6 +151,11 @@ const DASHBOARD = {
     
     if (lastMonth && lastMonth === currentMonth) {
       return;
+    }
+    
+    // Snapshot the month we're leaving, then reset inputs
+    if (lastMonth) {
+      SNAPSHOT.autoSnapshotOnRollover(lastMonth);
     }
     
     sheet.getRange("B26").setValue(0);
