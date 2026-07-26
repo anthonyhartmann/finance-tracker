@@ -18,11 +18,16 @@ Personal finance tracker: Plaid (bank sync) + Google Calendar (interview income)
 ├── Debug.gs                  # Debug.log/error/logRaw → hidden "debug" tab. Use for ALL logging.
 ├── Plaid.gs                  # PLAID object: API transport, tokens, sync, balances, account names.
 ├── SheetOps.gs               # SHEET object: all Sheet writes. Owns transactions column order.
-├── Dashboard.gs              # DASHBOARD object: the 3 numbers + month selector.
+├── Dashboard.gs              # DASHBOARD object: the 3 numbers + month selector + interview settings + savings summary.
 ├── Webhook.gs                # doPost/doGet + findItemNameByItemId + configureWebhook + refreshAllBalances.
 ├── Setup.gs                  # One-time credential setup (setupPlaidProduction etc).
-├── Link.gs                   # Linking banks: generateProdLinkToken / exchangeProdPublicToken[/Manual].
+├── Link.gs                   # Linking banks: generateProdLinkToken / exchangeProdPublicToken[/Manual]. Products include "investments".
 ├── Sync.gs                   # Day-to-day: syncAllProductionAccounts, syncProductionAccount, resetAndResync.
+├── Calendar.gs               # Interview income: parses Google Calendar events, counts per month, writes interview_income tab.
+├── Manual.gs                 # Manual adjustments tab: amount + optional description only. Auto id + created_at.
+├── Recurring.gs              # Recurring transactions: expected bills, matching against actual, upcoming unpaid total.
+├── Savings.gs                # Isolated savings tracker: /transactions/get + /investments/transactions/get. Separate from main sync.
+├── Snapshot.gs               # Monthly snapshot: dumps full sheet state before month rollover.
 ├── Tests.gs                  # Diagnostics + DEPRECATED sandbox-era tests (do not run).
 ├── plaid-link.html           # Local Plaid Link fallback page (open the FILE in a browser).
 ├── PLAN.md                   # Project status, milestones, runbooks.
@@ -66,6 +71,49 @@ Personal finance tracker: Plaid (bank sync) + Google Calendar (interview income)
 curl -s 'https://sheets.googleapis.com/v4/spreadsheets/{SHEET_ID}/values/{TAB_NAME}?key={API_KEY}'
 ```
 Tabs: Sheet1 (0), debug (711367457), transactions (gid changes on rebuild — read by NAME), dashboard (2006033775).
+
+## Key Learnings (Session 2026-07-25)
+
+### Calendar Income (I6)
+- `Calendar.gs` parses a specific Google Calendar for interview events
+- Standard interviews = $85 gross, non-standard = $115, cancellations = $75
+- All multiplied by `Tax Scalar` (default 0.7) — user-adjustable in dashboard
+- Manual inputs: `# Non-Standard Interviews` transforms existing events (adds $30 each, capped at actual count)
+- `# Late Cancellations` adds cancellation income manually (event removed from calendar)
+- `Count Upcoming Interviews` setting toggles whether future events count toward income
+- Settings reset to 0 on month rollover
+
+### Manual Adjustments (I7)
+- `Manual.gs` tab: user enters `amount` + optional `description` only
+- `id` = row number, `created_at` = row modification time (formula)
+- No metadata fields required — dead simple
+
+### Recurring Transactions
+- `Recurring.gs` tracks expected monthly/weekly bills with flexible name matching
+- Monthly: "has this bill posted this month?" If not, adds to `upcoming_recurring_total`
+- Weekly (e.g., Headway): expects 4 postings/month, adds `(4 × cost) - (already posted × cost)`
+- Uses resolved merchant names from actual transactions for future matching
+- `Include Upcoming in Spend` dashboard setting controls whether upcoming bills are included in net spend
+
+### Savings Tracker (I9+)
+- **Completely isolated** from main sync — uses `/transactions/get` (not sync cursors), so arbitrary date ranges work
+- **Different sync start dates per workflow are fine** — Savings doesn't touch cursors
+- Queries only `ally`, `bofa`, `fidelity` — skips `discover`, `chase`
+- Bank transaction history only goes back to account linking date (~April 2026 for BofA)
+- **Manual adjustment columns** (`manual_transfers`, `manual_retirement`, `manual_ally_out`) preserve pre-linking historical data
+- `populateManualAdjustments()` handles Date objects from Sheets (not just strings)
+
+### Investment / 401k Data
+- `/investments/transactions/get` requires the **`investments` product** during Link (not just `transactions`)
+- 401k contributions: `subtype === "contribution"` with **negative amounts** (money going IN)
+- Use `Math.abs()` to convert to positive savings
+- Ally/BofA will return `PRODUCT_NOT_ENABLED` for investments — handle gracefully
+- `generateProdLinkToken()` creates a **new session** — existing tokens untouched. Add one bank at a time.
+
+### Adding Banks
+- `generateProdLinkToken()` → open Hosted Link URL → connect bank → `exchangeProdPublicToken()` → name it
+- Existing `ACCESS_TOKEN_*` keys are never touched — safe to add one bank at a time
+- Only re-connect banks if you want to add products (e.g., investments to existing Fidelity)
 
 ## Shell Sandbox
 
