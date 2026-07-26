@@ -35,6 +35,11 @@ const DASHBOARD = {
       ["Upcoming Bills (unpaid)", "", "From recurring tab"],
       ["Include Upcoming in Spend", 1, "0 = actual only, 1 = include expected bills"],
       ["", "", ""],
+      ["Savings Summary", "", ""],
+      ["Total Saved", '=SUM(savings_tracker!B2:B)', "All months combined"],
+      ["Avg Monthly Savings", '=AVERAGE(savings_tracker!B2:B)', "Average per month"],
+      ["Months Saved", '=COUNT(savings_tracker!B2:B)', "Number of months with data"],
+      ["", "", ""],
       ["Interview Settings", "", ""],
       ["Standard Rate ($)", 85, "Coding / Behavioral / System Design"],
       ["Non-Standard Rate ($)", 115, "Other interview types"],
@@ -56,16 +61,17 @@ const DASHBOARD = {
     sheet.getRange("A7").setFontWeight("bold");
     sheet.getRange("A14").setFontWeight("bold");
     sheet.getRange("A17").setFontWeight("bold");
-    sheet.getRange("A24").setFontWeight("bold");
+    sheet.getRange("A22").setFontWeight("bold");
+    sheet.getRange("A29").setFontWeight("bold");
 
     sheet.getRange("B5").setNumberFormat("0");
     sheet.getRange("B4").setNumberFormat("@");
-    sheet.getRange("B8:B13").setNumberFormat("#,##0");
-    sheet.getRange("B14:B15").setNumberFormat("#,##0");
-    sheet.getRange("B18:B20").setNumberFormat("0");
-    sheet.getRange("B21").setNumberFormat("0.00");
-    sheet.getRange("B22").setNumberFormat("0");
-    sheet.getRange("B25:B26").setNumberFormat("0");
+    sheet.getRange("B8:B15").setNumberFormat("#,##0");
+    sheet.getRange("B18:B20").setNumberFormat("#,##0");
+    sheet.getRange("B23:B25").setNumberFormat("0");
+    sheet.getRange("B26").setNumberFormat("0.00");
+    sheet.getRange("B27").setNumberFormat("0");
+    sheet.getRange("B30:B31").setNumberFormat("0");
 
     sheet.setColumnWidth(1, 220);
     sheet.setColumnWidth(2, 120);
@@ -371,7 +377,7 @@ function onEdit(e) {
 
     if (col !== 2) return;
 
-    var inputRows = [4, 5, 15, 18, 19, 20, 21, 22, 25, 26];
+    var inputRows = [4, 5, 15, 23, 24, 25, 26, 27, 30, 31];
     if (inputRows.indexOf(row) < 0) return;
 
     Debug.log("Dashboard.onEdit", "Input cell B" + row + " changed — auto-refreshing dashboard");
