@@ -314,3 +314,27 @@ function initDashboard() {
 function refreshDashboard() {
   DASHBOARD.refresh();
 }
+
+/**
+ * Auto-refresh dashboard when any input cell changes.
+ * Runs automatically on every edit — no button needed.
+ */
+function onEdit(e) {
+  if (!e || !e.range) return;
+
+  var sheet = e.range.getSheet();
+  if (sheet.getName() !== DASHBOARD.TAB) return;
+
+  var row = e.range.getRow();
+  var col = e.range.getColumn();
+
+  // Only react to edits in column B (2) of the input rows
+  if (col !== 2) return;
+
+  // Input rows: B4, B5, B19:B23, B26:B27
+  var inputRows = [4, 5, 19, 20, 21, 22, 23, 26, 27];
+  if (inputRows.indexOf(row) < 0) return;
+
+  Debug.log("Dashboard.onEdit", "Input cell B" + row + " changed — auto-refreshing dashboard");
+  DASHBOARD.refresh();
+}
