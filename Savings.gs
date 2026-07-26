@@ -279,7 +279,11 @@ function populateManualAdjustments() {
 
   var updated = 0;
   for (var row = 1; row < data.length; row++) {
-    var month = String(data[row][monthCol]).trim();
+    var rawMonth = data[row][monthCol];
+    var month = rawMonth instanceof Date 
+      ? Utilities.formatDate(rawMonth, Session.getScriptTimeZone(), "yyyy-MM")
+      : String(rawMonth).trim();
+    Debug.log("populateManualAdjustments", "Row " + (row + 1) + " month=" + month + " (type=" + typeof rawMonth + ")");
     if (manual[month]) {
       sheet.getRange(row + 1, manualTransferCol + 1).setValue(manual[month].transfers);
       sheet.getRange(row + 1, manualRetirementCol + 1).setValue(manual[month].retirement);
