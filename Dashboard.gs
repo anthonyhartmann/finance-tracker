@@ -20,7 +20,7 @@ const DASHBOARD = {
 
     var layout = [
       ["Finance Tracker Dashboard", "", ""],
-      ["", "", ""],
+      ["🔄 Refresh All", "", "Click checkbox to sync transactions, savings, and calendar"],
       ["Controls", "", ""],
       ["Month (YYYY-MM)", new Date().getFullYear() + "-" + padMonth(new Date().getMonth() + 1), ""],
       ["Monthly Target", 4000, ""],
@@ -63,6 +63,15 @@ const DASHBOARD = {
     sheet.getRange("A17").setFontWeight("bold");
     sheet.getRange("A22").setFontWeight("bold");
     sheet.getRange("A29").setFontWeight("bold");
+
+    // Refresh All checkbox
+    sheet.getRange("B2").insertCheckboxes();
+    sheet.getRange("B2").setValue("FALSE");
+    sheet.getRange("A2:C2").setBackground("#4CAF50");
+    sheet.getRange("A2").setFontColor("#FFFFFF");
+    sheet.getRange("A2").setFontWeight("bold");
+    sheet.getRange("C2").setFontColor("#FFFFFF");
+    sheet.getRange("C2").setFontStyle("italic");
 
     sheet.getRange("B5").setNumberFormat("0");
     sheet.getRange("B4").setNumberFormat("@");
@@ -348,6 +357,64 @@ const DASHBOARD = {
   }
 };
 
+/**
+ * Refresh ALL data sources: transactions (Plaid sync), calendar interviews,
+ * savings tracker, and dashboard numbers. Triggered by the Refresh All checkbox
+ * on the dashboard tab.
+ *
+ * Each step is wrapped in try/catch so one failure doesn't block the rest.
+ */
+function refreshAll() {
+  Debug.log("refreshAll", "=== Starting full refresh ===");
+  var startTime = new Date();
+
+  // 1. Sync transactions + balances from all linked banks
+  try {
+    Debug.log("refreshAll", "Step 1/4: Syncing transactions...");
+    syncAllProductionAccounts();
+  } catch (e) {
+    Debug.error("refreshAll", "Transactions sync failed: " + e.message);
+  }
+
+  // 2. Refresh calendar interview income
+  try {
+    Debug.log("refreshAll", "Step 2/4: Parsing calendar events...");
+    parseCalendarEvents();
+  } catch (e) {
+    Debug.error("refreshAll", "Calendar parse failed: " + e.message);
+  }
+
+  // 3. Rebuild savings tracker
+  try {
+    Debug.log("refreshAll", "Step 3/4: Backfilling savings...");
+    SAVINGS.backfill("2026-01-01");
+  } catch (e) {
+    Debug.error("refreshAll", "Savings backfill failed: " + e.message);
+  }
+
+  // 4. Refresh dashboard numbers
+  try {
+    Debug.log("refreshAll", "Step 4/4: Refreshing dashboard...");
+    DASHBOARD.refresh();
+  } catch (e) {
+    Debug.error("refreshAll", "Dashboard refresh failed: " + e.message);
+  }
+
+  var elapsed = (new Date() - startTime) / 1000;
+  Debug.log("refreshAll", "=== Full refresh complete in " + elapsed.toFixed(1) + "s ===");
+
+  // Show toast to user
+  try {
+    SpreadsheetApp.getActiveSpreadsheet().toast(
+      "Transactions, savings, calendar, and dashboard refreshed in " + elapsed.toFixed(1) + "s.",
+      "✅ Refresh All",
+      5
+    );
+  } catch (e) {
+    // Toast can fail in non-UI contexts (e.g., time-driven triggers) — ignore
+  }
+}
+
 function padMonth(m) {
   return m < 10 ? "0" + m : String(m);
 }
@@ -370,12 +437,21 @@ function onEdit(e) {
   var sheet = e.range.getSheet();
   var tabName = sheet.getName();
 
-  // Dashboard inputs: B4, B5, B15, B18:B22, B25:B26
+  // Dashboard inputs: B2 (Refresh All checkbox), B4, B5, B15, B23:B27, B30:B31
   if (tabName === DASHBOARD.TAB) {
     var row = e.range.getRow();
     var col = e.range.getColumn();
 
     if (col !== 2) return;
+
+    // Refresh All checkbox (B2) — run full sync when checked
+    if (row === 2 && e.value === "TRUE") {
+      Debug.log("Dashboard.onEdit", "Refresh All checkbox toggled — running refreshAll()");
+      // Reset checkbox to FALSE so it's ready for next click
+      e.range.setValue(false);
+      refreshAll();
+      return;
+    }
 
     var inputRows = [4, 5, 15, 23, 24, 25, 26, 27, 30, 31];
     if (inputRows.indexOf(row) < 0) return;
