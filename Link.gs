@@ -44,7 +44,7 @@ function generateProdLinkToken() {
       client_name: "Finance Tracker",
       user_id: userId,
       enable_multi_item_link: true,
-      products: ["transactions"],
+      products: ["transactions", "investments"],
       country_codes: ["US"],
       language: "en",
       hosted_link: {},
