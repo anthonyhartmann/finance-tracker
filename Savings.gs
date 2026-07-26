@@ -2,10 +2,11 @@
  * Savings.gs — Completely isolated savings tracker.
  *
  * Uses Plaid /transactions/get (not sync) to backfill arbitrary date ranges.
+ * Also calls /investments/transactions/get for 401k contribution data.
  *
  * Detects per month:
  *   + Transfers from checking → savings (EXCLUDES P2P, ATM withdrawals)
- *   + 401k contributions (Fidelity — auto or manual fallback)
+ *   + 401k contributions (Fidelity /investments/transactions/get, subtype=contribution)
  *   − Ally outflows
  *
  * Tab: savings_tracker
@@ -16,7 +17,6 @@ const SAVINGS = {
   TAB: "savings_tracker",
   HEADERS: ["month", "transfers_to_savings", "retirement_401k", "ally_outflows", "net_savings", "details"],
 
-  // Exclusion keywords for "transfers to savings"
   EXCLUDE_KEYWORDS: ["venmo", "zelle", "cash app", "paypal", "cashapp", "atm", "withdrawal", "withdrwl"],
 
   backfill: function (startDate, endDate) {
@@ -26,10 +26,12 @@ const SAVINGS = {
     Debug.log("Savings.backfill", "Range: " + startDate + " to " + endDate);
 
     var allTx = this.fetchAllTransactions(startDate, endDate);
-    Debug.log("Savings.backfill", "Fetched " + allTx.length + " total transactions");
+    var allInvTx = this.fetchAllInvestmentTransactions(startDate, endDate);
+    Debug.log("Savings.backfill", "Fetched " + allTx.length + " bank transactions, " + allInvTx.length + " investment transactions");
 
     var byMonth = {};
 
+    // Process bank transactions
     for (var i = 0; i < allTx.length; i++) {
       var t = allTx[i];
       var date = t.date || t.authorized_date || "";
@@ -47,7 +49,7 @@ const SAVINGS = {
       var name = String(t.name || "").toLowerCase();
       var amount = Number(t.amount) || 0;
 
-      // 1) Transfers FROM checking → savings
+      // Transfers FROM checking → savings
       var isTransfer = category.indexOf("TRANSFER") >= 0;
       var isChecking = accountSubtype === "checking" || accountName.indexOf("checking") >= 0;
       var isExcluded = this.isExcluded(name + " " + merchant);
@@ -58,27 +60,34 @@ const SAVINGS = {
         continue;
       }
 
-      // 2) 401k contributions — Fidelity / NetBenefits / retirement keywords
-      var isRetirement = (
-        accountName.indexOf("401k") >= 0 ||
-        accountName.indexOf("fidelity") >= 0 ||
-        merchant.indexOf("netbenefits") >= 0 ||
-        merchant.indexOf("fidelity") >= 0 ||
-        name.indexOf("netbenefits") >= 0 ||
-        name.indexOf("401k") >= 0 ||
-        name.indexOf("retirement") >= 0
-      );
-      if (isRetirement && amount > 0) {
-        byMonth[month].retirement += amount;
-        byMonth[month].details.push(date + ": 401k contrib $" + amount + " (" + name + ")");
-        continue;
-      }
-
-      // 3) Ally outflows — ANY positive amount from Ally
+      // Ally outflows
       var isAlly = accountName.indexOf("ally") >= 0;
       if (isAlly && amount > 0) {
         byMonth[month].ally_out += amount;
         byMonth[month].details.push(date + ": Ally outflow $" + amount + " (" + name + ")");
+      }
+    }
+
+    // Process investment transactions (401k contributions)
+    for (var j = 0; j < allInvTx.length; j++) {
+      var inv = allInvTx[j];
+      var invDate = inv.date || "";
+      if (!invDate || invDate < startDate || invDate > endDate) continue;
+
+      var invMonth = invDate.substring(0, 7);
+      if (!byMonth[invMonth]) {
+        byMonth[invMonth] = { transfers: 0, retirement: 0, ally_out: 0, details: [] };
+      }
+
+      var subtype = String(inv.subtype || "").toLowerCase();
+      var invAmount = Number(inv.amount) || 0;
+      var invName = String(inv.name || "");
+
+      // Contributions are negative in Plaid's investment API (money going IN)
+      if (subtype === "contribution" && invAmount < 0) {
+        var contribAmount = Math.abs(invAmount);
+        byMonth[invMonth].retirement += contribAmount;
+        byMonth[invMonth].details.push(invDate + ": 401k contrib $" + contribAmount + " (" + invName + ")");
       }
     }
 
@@ -122,6 +131,9 @@ const SAVINGS = {
     return "";
   },
 
+  /**
+   * Fetch bank transactions for ALL linked items via /transactions/get.
+   */
   fetchAllTransactions: function (startDate, endDate) {
     var props = PropertiesService.getScriptProperties();
     var keys = props.getKeys();
@@ -172,6 +184,54 @@ const SAVINGS = {
     return all;
   },
 
+  /**
+   * Fetch investment transactions for ALL linked items via /investments/transactions/get.
+   */
+  fetchAllInvestmentTransactions: function (startDate, endDate) {
+    var props = PropertiesService.getScriptProperties();
+    var keys = props.getKeys();
+    var all = [];
+
+    for (var i = 0; i < keys.length; i++) {
+      if (keys[i].indexOf("ACCESS_TOKEN_") !== 0) continue;
+      var itemName = keys[i].replace("ACCESS_TOKEN_", "");
+      var token = props.getProperty(keys[i]);
+      if (!token) continue;
+
+      try {
+        var page = 0;
+        var hasMore = true;
+        while (hasMore) {
+          var data = PLAID._post("/investments/transactions/get", {
+            access_token: token,
+            start_date: startDate,
+            end_date: endDate,
+            options: { offset: page * 100, count: 100 }
+          });
+
+          var txList = data.investment_transactions || [];
+          for (var t = 0; t < txList.length; t++) {
+            all.push(txList[t]);
+          }
+
+          hasMore = txList.length === 100;
+          page++;
+        }
+
+        Debug.log("Savings.fetchAllInvestmentTransactions", itemName + ": done, total so far " + all.length);
+      } catch (e) {
+        // Product not enabled for this item — skip silently
+        if (e.message && e.message.indexOf("PRODUCT_NOT_ENABLED") >= 0) {
+          Debug.log("Savings.fetchAllInvestmentTransactions", itemName + ": investments product not enabled, skipping");
+        } else {
+          Debug.error("Savings.fetchAllInvestmentTransactions", itemName + " failed: " + e.message);
+        }
+      }
+    }
+
+    return all;
+  },
+
   ensureTab: function () {
     var ss = SpreadsheetApp.getActiveSpreadsheet();
     var sheet = ss.getSheetByName(this.TAB);
@@ -195,7 +255,6 @@ function backfillSavingsYear() {
 
 /**
  * Diagnostic: try /investments/transactions/get on Fidelity.
- * Run this to see if Plaid exposes 401k contribution data.
  */
 function testFidelityInvestments() {
   var token = PLAID.getAccessToken("fidelity");
