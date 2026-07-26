@@ -1,14 +1,14 @@
 /**
  * Calendar.gs — Google Calendar interview income parser
  * 
- * Reads interview events from the user's primary Google Calendar,
- * classifies them by type/rate, and writes net income to the
- * interview_income tab for Dashboard consumption.
+ * Reads interview events from the user's primary Google Calendar
+ * and writes them to the interview_income tab. All events are
+ * treated as standard ($85) by default; the Dashboard applies
+ * rates, tax scalar, and manual overrides.
  */
 
 const CALENDAR = {
   TAB: "interview_income",
-  TAX_SCALAR: 0.7,
 
   /**
    * Dump recent calendar events to the debug tab for inspection.
@@ -44,7 +44,8 @@ const CALENDAR = {
   },
 
   /**
-   * Parse calendar events and write interview income to the interview_income tab.
+   * Parse calendar events and write interview events to the interview_income tab.
+   * Writes only raw data (date, title, status); Dashboard computes income.
    *
    * @param {number} daysBack   How many days back to scan (default 90)
    * @param {number} daysForward How many days forward to scan (default 30)
@@ -75,9 +76,6 @@ const CALENDAR = {
 
       if (!this.looksLikeInterview(combined)) continue;
 
-      var type = this.classifyInterview(combined);
-      var rate = type === "standard" ? 85 : 115;
-      var netAmount = Math.round(rate * this.TAX_SCALAR * 100) / 100;
       var eventStart = e.getStartTime();
       var dateStr = Utilities.formatDate(eventStart, Session.getScriptTimeZone(), "yyyy-MM-dd");
       var status = eventStart < now ? "Past" : "Upcoming";
@@ -85,21 +83,19 @@ const CALENDAR = {
       interviews.push({
         date: dateStr,
         title: title,
-        parsed_type: "$" + rate,
-        status: status,
-        amount: netAmount
+        status: status
       });
     }
 
     Debug.log("Calendar.parseCalendarEvents", "Found " + interviews.length + " interview events");
 
-    var headers = ["date", "title", "parsed_type", "status", "amount"];
+    var headers = ["date", "title", "status"];
     var sheet = SHEET.ensureTab(this.TAB, headers);
 
     var rows = [];
     for (var j = 0; j < interviews.length; j++) {
       var iv = interviews[j];
-      rows.push([iv.date, iv.title, iv.parsed_type, iv.status, iv.amount]);
+      rows.push([iv.date, iv.title, iv.status]);
     }
 
     sheet.clearContents();
@@ -140,19 +136,39 @@ const CALENDAR = {
   },
 
   /**
-   * Classify interview type.
-   * coding / system design / behavioral / technical screen → $85 (standard)
-   * everything else → $115 (other)
+   * Set up a daily time-driven trigger for calendar sync.
+   * Call once; idempotent (won't create duplicates).
    */
-  classifyInterview: function (text) {
-    var standardTerms = [
-      "coding", "system design", "behavioral",
-      "technical screen", "phone screen"
-    ];
-    for (var i = 0; i < standardTerms.length; i++) {
-      if (text.indexOf(standardTerms[i]) >= 0) return "standard";
+  setupCalendarSyncTrigger: function () {
+    var triggers = ScriptApp.getProjectTriggers();
+    for (var i = 0; i < triggers.length; i++) {
+      if (triggers[i].getHandlerFunction() === "parseCalendarEvents") {
+        Debug.log("Calendar.setupCalendarSyncTrigger", "Trigger already exists");
+        return;
+      }
     }
-    return "other";
+
+    ScriptApp.newTrigger("parseCalendarEvents")
+      .timeBased()
+      .everyDays(1)
+      .create();
+
+    Debug.log("Calendar.setupCalendarSyncTrigger", "Daily calendar sync trigger created");
+  },
+
+  /**
+   * Remove all calendar sync triggers.
+   */
+  removeCalendarSyncTriggers: function () {
+    var triggers = ScriptApp.getProjectTriggers();
+    var removed = 0;
+    for (var i = 0; i < triggers.length; i++) {
+      if (triggers[i].getHandlerFunction() === "parseCalendarEvents") {
+        ScriptApp.deleteTrigger(triggers[i]);
+        removed++;
+      }
+    }
+    Debug.log("Calendar.removeCalendarSyncTriggers", "Removed " + removed + " triggers");
   }
 };
 
@@ -162,4 +178,12 @@ function dumpCalendarEvents() {
 
 function parseCalendarEvents() {
   CALENDAR.parseCalendarEvents();
+}
+
+function setupCalendarSyncTrigger() {
+  CALENDAR.setupCalendarSyncTrigger();
+}
+
+function removeCalendarSyncTriggers() {
+  CALENDAR.removeCalendarSyncTriggers();
 }

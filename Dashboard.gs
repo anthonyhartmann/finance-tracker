@@ -35,6 +35,16 @@ const DASHBOARD = {
       ["", "", ""],
       ["Balances (live from Plaid)", "", ""],
       ["Total Available Balance", "", "Sum of all account balances"],
+      ["", "", ""],
+      ["Interview Settings", "", ""],
+      ["Standard Rate ($)", 85, "Coding / Behavioral / System Design"],
+      ["Non-Standard Rate ($)", 115, "Other interview types"],
+      ["Cancellation Rate ($)", 75, "No-show / late cancellation"],
+      ["Tax Scalar", 0.7, "Applied to gross"],
+      ["", "", ""],
+      ["Manual Inputs (resets monthly)", "", ""],
+      ["# Non-Standard Interviews", 0, "Transforms $85 → $115"],
+      ["# Late Cancellations", 0, "Manual entry — event removed from calendar"],
     ];
     
     for (var r = 0; r < layout.length; r++) {
@@ -45,11 +55,16 @@ const DASHBOARD = {
     sheet.getRange("A3").setFontWeight("bold");
     sheet.getRange("A7").setFontWeight("bold");
     sheet.getRange("A15").setFontWeight("bold");
+    sheet.getRange("A18").setFontWeight("bold");
+    sheet.getRange("A24").setFontWeight("bold");
     
     sheet.getRange("B5").setNumberFormat("0");
     sheet.getRange("B4").setNumberFormat("@");
     sheet.getRange("B8:B13").setNumberFormat("#,##0");
     sheet.getRange("B16").setNumberFormat("#,##0");
+    sheet.getRange("B19:B21").setNumberFormat("0");
+    sheet.getRange("B22").setNumberFormat("0.00");
+    sheet.getRange("B25:B26").setNumberFormat("0");
     
     sheet.setColumnWidth(1, 220);
     sheet.setColumnWidth(2, 120);
@@ -77,6 +92,9 @@ const DASHBOARD = {
       return;
     }
     
+    // Reset manual inputs if month rolled over
+    this.maybeResetManualInputs(sheet, month);
+    
     var parts = month.split("-");
     var year = parseInt(parts[0]);
     var monthNum = parseInt(parts[1]);
@@ -91,10 +109,20 @@ const DASHBOARD = {
     
     Debug.log("Dashboard.refresh", "Calculating for: " + startStr + " to " + endStr);
     
+    // Read interview settings
+    var settings = {
+      standardRate: Number(sheet.getRange("B19").getValue()) || 85,
+      nonStandardRate: Number(sheet.getRange("B20").getValue()) || 115,
+      cancellationRate: Number(sheet.getRange("B21").getValue()) || 75,
+      taxScalar: Number(sheet.getRange("B22").getValue()) || 0.7,
+      nonStandardCount: Number(sheet.getRange("B25").getValue()) || 0,
+      cancellationCount: Number(sheet.getRange("B26").getValue()) || 0
+    };
+    
     var spend = this.calculateSpend(startStr, endStr);
     sheet.getRange("B8").setValue(spend);
     
-    var interviewIncome = this.calculateInterviewIncome(startStr, endStr);
+    var interviewIncome = this.calculateInterviewIncome(startStr, endStr, settings);
     sheet.getRange("B9").setValue(interviewIncome);
     
     var manualAdjustments = this.calculateManualAdjustments(startStr, endStr);
@@ -108,6 +136,24 @@ const DASHBOARD = {
     sheet.getRange("C13").setValue("Target: $" + target + ", " + daysRemaining + " days left");
     
     Debug.log("Dashboard.refresh", "Spend: $" + spend + " | Net: $" + netIncome + " | Daily: $" + Math.round(dailyBudget));
+  },
+
+  /**
+   * Reset manual inputs to 0 when the displayed month changes.
+   */
+  maybeResetManualInputs: function (sheet, currentMonth) {
+    var props = PropertiesService.getScriptProperties();
+    var lastMonth = props.getProperty("LAST_DASHBOARD_MONTH");
+    
+    if (lastMonth && lastMonth === currentMonth) {
+      return;
+    }
+    
+    sheet.getRange("B25").setValue(0);
+    sheet.getRange("B26").setValue(0);
+    props.setProperty("LAST_DASHBOARD_MONTH", currentMonth);
+    
+    Debug.log("Dashboard.maybeResetManualInputs", "Month changed from " + lastMonth + " to " + currentMonth + " — reset manual inputs");
   },
 
   /**
@@ -167,9 +213,20 @@ const DASHBOARD = {
   
   /**
    * Calculate interview income from the interview_income tab.
-   * Reads columns by header name and filters to the given date range.
+   * All calendar events are treated as standard ($85) by default.
+   * Non-standard count transforms existing entries (+$30 each).
+   * Cancellations are manual input ($75 each).
+   * Settings are read from the dashboard cells.
    */
-  calculateInterviewIncome: function (startDate, endDate) {
+  calculateInterviewIncome: function (startDate, endDate, settings) {
+    settings = settings || {};
+    var standardRate = settings.standardRate || 85;
+    var nonStandardRate = settings.nonStandardRate || 115;
+    var cancellationRate = settings.cancellationRate || 75;
+    var taxScalar = settings.taxScalar || 0.7;
+    var nonStandardCount = settings.nonStandardCount || 0;
+    var cancellationCount = settings.cancellationCount || 0;
+    
     var ss = SpreadsheetApp.getActiveSpreadsheet();
     var sheet = ss.getSheetByName("interview_income");
     if (!sheet) return 0;
@@ -180,28 +237,40 @@ const DASHBOARD = {
     var header = [];
     for (var h = 0; h < data[0].length; h++) header.push(String(data[0][h]));
     var dateCol = header.indexOf("date");
-    var amountCol = header.indexOf("amount");
-    if (dateCol < 0 || amountCol < 0) {
-      Debug.error("Dashboard.calculateInterviewIncome", "interview_income tab missing date/amount columns");
+    if (dateCol < 0) {
+      Debug.error("Dashboard.calculateInterviewIncome", "interview_income tab missing date column");
       return 0;
     }
     
-    var total = 0;
+    var totalInterviews = 0;
     for (var r = 1; r < data.length; r++) {
       var rawDate = data[r][dateCol];
-      var amount = Number(data[r][amountCol]) || 0;
-      
       var date = "";
       if (rawDate instanceof Date) {
         date = Utilities.formatDate(rawDate, Session.getScriptTimeZone(), "yyyy-MM-dd");
       } else {
         date = String(rawDate || "");
       }
-      
-      if (date < startDate || date > endDate) continue;
-      total += amount;
+      if (date >= startDate && date <= endDate) {
+        totalInterviews++;
+      }
     }
-    return total;
+    
+    var cappedNonStandard = Math.min(nonStandardCount, totalInterviews);
+    var standardCount = totalInterviews - cappedNonStandard;
+    
+    var gross = standardCount * standardRate + cappedNonStandard * nonStandardRate + cancellationCount * cancellationRate;
+    var net = Math.round(gross * taxScalar * 100) / 100;
+    
+    Debug.log("Dashboard.calculateInterviewIncome", 
+      "Interviews: " + totalInterviews + 
+      ", standard: " + standardCount + 
+      ", non-standard: " + cappedNonStandard + 
+      ", cancellations: " + cancellationCount + 
+      ", gross: " + gross + 
+      ", net: " + net);
+    
+    return net;
   },
   
   /**
@@ -236,4 +305,3 @@ function initDashboard() {
 function refreshDashboard() {
   DASHBOARD.refresh();
 }
-
