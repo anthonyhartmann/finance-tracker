@@ -105,6 +105,12 @@ const DASHBOARD = {
    * Refresh all dashboard values.
    */
   refresh: function () {
+    // Prevent re-entrant calls (e.g., maybeResetManualInputs writes trigger onEdit)
+    if (this._refreshing) return;
+    this._refreshing = true;
+
+    try {
+
     var ss = SpreadsheetApp.getActiveSpreadsheet();
     var sheet = ss.getSheetByName(this.TAB);
     if (!sheet) {
@@ -187,6 +193,10 @@ const DASHBOARD = {
       ss.toast("Dashboard refreshed.", "✅", 2);
     } catch (e) {
       // toast can fail outside UI context — ignore
+    }
+
+    } finally {
+      this._refreshing = false;
     }
   },
 
