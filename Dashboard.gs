@@ -35,6 +35,7 @@ const DASHBOARD = {
       ["", "", ""],
       ["Balances (live from Plaid)", "", ""],
       ["Total Available Balance", "", "Sum of all account balances"],
+      ["Upcoming Bills (unpaid)", "", "From recurring tab"],
       ["", "", ""],
       ["Interview Settings", "", ""],
       ["Standard Rate ($)", 85, "Coding / Behavioral / System Design"],
@@ -56,17 +57,17 @@ const DASHBOARD = {
     sheet.getRange("A3").setFontWeight("bold");
     sheet.getRange("A7").setFontWeight("bold");
     sheet.getRange("A15").setFontWeight("bold");
-    sheet.getRange("A18").setFontWeight("bold");
-    sheet.getRange("A25").setFontWeight("bold");
+    sheet.getRange("A19").setFontWeight("bold");
+    sheet.getRange("A26").setFontWeight("bold");
     
     sheet.getRange("B5").setNumberFormat("0");
     sheet.getRange("B4").setNumberFormat("@");
     sheet.getRange("B8:B13").setNumberFormat("#,##0");
-    sheet.getRange("B16").setNumberFormat("#,##0");
-    sheet.getRange("B19:B21").setNumberFormat("0");
-    sheet.getRange("B22").setNumberFormat("0.00");
-    sheet.getRange("B23").setNumberFormat("0");
-    sheet.getRange("B26:B27").setNumberFormat("0");
+    sheet.getRange("B16:B17").setNumberFormat("#,##0");
+    sheet.getRange("B20:B22").setNumberFormat("0");
+    sheet.getRange("B23").setNumberFormat("0.00");
+    sheet.getRange("B24").setNumberFormat("0");
+    sheet.getRange("B27:B28").setNumberFormat("0");
     
     sheet.setColumnWidth(1, 220);
     sheet.setColumnWidth(2, 120);
@@ -113,13 +114,13 @@ const DASHBOARD = {
     
     // Read interview settings
     var settings = {
-      standardRate: Number(sheet.getRange("B19").getValue()) || 85,
-      nonStandardRate: Number(sheet.getRange("B20").getValue()) || 115,
-      cancellationRate: Number(sheet.getRange("B21").getValue()) || 75,
-      taxScalar: Number(sheet.getRange("B22").getValue()) || 0.7,
-      countUpcoming: Number(sheet.getRange("B23").getValue()) !== 0,
-      nonStandardCount: Number(sheet.getRange("B26").getValue()) || 0,
-      cancellationCount: Number(sheet.getRange("B27").getValue()) || 0
+      standardRate: Number(sheet.getRange("B20").getValue()) || 85,
+      nonStandardRate: Number(sheet.getRange("B21").getValue()) || 115,
+      cancellationRate: Number(sheet.getRange("B22").getValue()) || 75,
+      taxScalar: Number(sheet.getRange("B23").getValue()) || 0.7,
+      countUpcoming: Number(sheet.getRange("B24").getValue()) !== 0,
+      nonStandardCount: Number(sheet.getRange("B27").getValue()) || 0,
+      cancellationCount: Number(sheet.getRange("B28").getValue()) || 0
     };
     
     var spend = this.calculateSpend(startStr, endStr);
@@ -138,7 +139,14 @@ const DASHBOARD = {
     sheet.getRange("B13").setValue(Math.round(dailyBudget));
     sheet.getRange("C13").setValue("Target: $" + target + ", " + daysRemaining + " days left");
     
-    Debug.log("Dashboard.refresh", "Spend: $" + spend + " | Net: $" + netIncome + " | Daily: $" + Math.round(dailyBudget));
+    // Upcoming unpaid recurring bills
+    var recurring = RECURRING.calculateUpcoming(year, monthNum, today);
+    sheet.getRange("B17").setValue(recurring.upcoming);
+    sheet.getRange("C17").setValue(recurring.items.map(function(i) {
+      return i.merchant + " ($" + i.amount + ")";
+    }).join(", ") || "None");
+    
+    Debug.log("Dashboard.refresh", "Spend: $" + spend + " | Net: $" + netIncome + " | Daily: $" + Math.round(dailyBudget) + " | Upcoming Bills: $" + recurring.upcoming);
   },
 
   /**
@@ -158,8 +166,8 @@ const DASHBOARD = {
       SNAPSHOT.autoSnapshotOnRollover(lastMonth);
     }
     
-    sheet.getRange("B26").setValue(0);
     sheet.getRange("B27").setValue(0);
+    sheet.getRange("B28").setValue(0);
     props.setProperty("LAST_DASHBOARD_MONTH", currentMonth);
     
     Debug.log("Dashboard.maybeResetManualInputs", "Month changed from " + lastMonth + " to " + currentMonth + " — reset manual inputs");
@@ -349,14 +357,14 @@ function onEdit(e) {
   var sheet = e.range.getSheet();
   var tabName = sheet.getName();
 
-  // Dashboard inputs: B4, B5, B19:B23, B26:B27
+  // Dashboard inputs: B4, B5, B20:B24, B27:B28
   if (tabName === DASHBOARD.TAB) {
     var row = e.range.getRow();
     var col = e.range.getColumn();
 
     if (col !== 2) return;
 
-    var inputRows = [4, 5, 19, 20, 21, 22, 23, 26, 27];
+    var inputRows = [4, 5, 20, 21, 22, 23, 24, 27, 28];
     if (inputRows.indexOf(row) < 0) return;
 
     Debug.log("Dashboard.onEdit", "Input cell B" + row + " changed — auto-refreshing dashboard");
@@ -367,6 +375,13 @@ function onEdit(e) {
   // Any edit in adjustments tab → refresh dashboard
   if (tabName === "adjustments") {
     Debug.log("Dashboard.onEdit", "Adjustments tab edited — auto-refreshing dashboard");
+    DASHBOARD.refresh();
+    return;
+  }
+
+  // Any edit in recurring tab → refresh dashboard
+  if (tabName === "recurring") {
+    Debug.log("Dashboard.onEdit", "Recurring tab edited — auto-refreshing dashboard");
     DASHBOARD.refresh();
     return;
   }
