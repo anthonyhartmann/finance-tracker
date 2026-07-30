@@ -1,0 +1,1179 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Finance Tracker Plan</title>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 860px; margin: 40px auto; padding: 0 24px; line-height: 1.7; color: #1a1a2e; background: #fafafa; }
+  h1 { border-bottom: 3px solid #1a1a2e; padding-bottom: 10px; font-size: 1.8em; }
+  h2 { border-bottom: 2px solid #4a90d9; padding-bottom: 6px; margin-top: 36px; color: #1a1a2e; }
+  h3 { margin-top: 28px; color: #2d2d5e; }
+  h4 { margin-top: 20px; color: #4a4a7a; }
+  table { border-collapse: collapse; width: 100%; margin: 16px 0; font-size: 0.92em; }
+  th, td { border: 1px solid #d0d0d0; padding: 8px 14px; text-align: left; }
+  th { background: #e8edf5; font-weight: 600; }
+  tr:nth-child(even) { background: #f5f7fa; }
+  code { background: #e8e8ee; padding: 2px 6px; border-radius: 4px; font-size: 0.88em; font-family: 'SF Mono', 'Fira Code', monospace; }
+  pre { background: #1a1a2e; color: #e0e0e0; padding: 18px; border-radius: 8px; overflow-x: auto; font-size: 0.88em; }
+  pre code { background: none; padding: 0; color: #e0e0e0; }
+  blockquote { border-left: 4px solid #4a90d9; margin: 16px 0; padding: 10px 18px; background: #eef3fa; border-radius: 0 6px 6px 0; }
+  hr { border: none; border-top: 1px solid #ddd; margin: 32px 0; }
+  ul, ol { padding-left: 24px; }
+  li { margin: 4px 0; }
+  strong { color: #1a1a2e; }
+</style>
+</head>
+<body>
+<h1>Personal Finance Tracker — Investigation &amp; Plan</h1>
+<h2>1. Plaid Integration — Trial Plan</h2>
+<h3>Tier &amp; Usage</h3>
+<table>
+<thead>
+<tr>
+  <th>Item</th>
+  <th>Detail</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td><strong>Tier</strong></td>
+  <td><strong>Trial Plan</strong> — free production access, up to 10 Items (we need ~4)</td>
+</tr>
+<tr>
+  <td><strong>APIs used</strong></td>
+  <td><code>/transactions/sync</code> (transactions) + <code>/accounts/balance/get</code> (live balances)</td>
+</tr>
+<tr>
+  <td><strong>Sync cadence</strong></td>
+  <td>2x/day (no API call limits to worry about)</td>
+</tr>
+<tr>
+  <td><strong>Webhooks</strong></td>
+  <td><strong>Required</strong> — <code>SYNC_UPDATES_AVAILABLE</code> for auto-sync (no manual polling)</td>
+</tr>
+<tr>
+  <td><strong>Link token duration</strong></td>
+  <td>Max <code>days_requested</code> (730)</td>
+</tr>
+<tr>
+  <td><strong>Link redirect_uri</strong></td>
+  <td>Need a dummy redirect URI configured in Plaid Dashboard (Link is a browser flow — you open it, I can't)</td>
+</tr>
+<tr>
+  <td><strong>Cursor management</strong></td>
+  <td>4 Items = 4 separate access_tokens + 4 cursors stored in ScriptProperties</td>
+</tr>
+<tr>
+  <td><strong>Transaction fields</strong></td>
+  <td>Keep all fields — Plaid doesn't charge per-field</td>
+</tr>
+<tr>
+  <td><strong>Ignore rules</strong></td>
+  <td>TBD — e.g. recurring transfers between own accounts, small amounts under a threshold</td>
+</tr>
+</tbody>
+</table>
+<h3>Transaction Sync API Flow</h3>
+<ol>
+<li><strong>Create Link Token</strong> → <code>POST /link/token/create</code> with product <code>transactions</code> and <code>days_requested=730</code></li>
+<li><strong>You open Plaid Link in a browser</strong> — I can generate the link_token but cannot open the browser for you. You log into your bank, grant access.</li>
+<li><strong>Exchange token</strong> → <code>POST /item/public_token/exchange</code> → get <code>access_token</code></li>
+<li><strong>Sync transactions</strong> → <code>POST /transactions/sync</code>:<ul>
+<li>First call: no cursor → returns initial batch + <code>next_cursor</code></li>
+<li>Subsequent calls: pass <code>cursor</code> param → get only new/changed/removed transactions since last sync</li>
+<li>Paginate via <code>has_more</code> flag</li>
+</ul>
+</li>
+<li><strong>Webhook handler</strong> — <code>SYNC_UPDATES_AVAILABLE</code> fires when new data is ready; Apps Script trigger responds</li>
+<li><strong>Fetch live balances</strong> — <code>POST /accounts/balance/get</code> for each Item to get current &amp; available balances (separate from transaction sync)</li>
+</ol>
+<h3>Accounts to Connect</h3>
+<table>
+<thead>
+<tr>
+  <th>Account</th>
+  <th>Institution</th>
+  <th>Type</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td>Long-term savings</td>
+  <td>Ally</td>
+  <td>Savings</td>
+</tr>
+<tr>
+  <td>Short-term savings</td>
+  <td>Bank of America</td>
+  <td>Savings (mostly empty)</td>
+</tr>
+<tr>
+  <td>Checking</td>
+  <td>Bank of America</td>
+  <td>Checking</td>
+</tr>
+<tr>
+  <td>Credit card</td>
+  <td>Chase</td>
+  <td>Credit</td>
+</tr>
+<tr>
+  <td>Credit card</td>
+  <td>Discover</td>
+  <td>Credit</td>
+</tr>
+</tbody>
+</table>
+<p>~4 Plaid &quot;Items&quot; (Ally, BofA, Chase, Discover). BofA checking + savings share one Item.</p>
+<h3>Transaction Data Fields</h3>
+<p><code>transaction_id</code>, <code>amount</code>, <code>iso_currency_code</code>, <code>date</code>, <code>authorized_date</code>, <code>name</code>, <code>merchant_name</code>, <code>personal_finance_category</code>, <code>payment_channel</code> (in store, online, other), <code>pending</code> (boolean), <code>pending_transaction_id</code>, <code>account_id</code>, <code>logo_url</code>, <code>website</code>, <code>address</code>, <code>city</code>, <code>state</code>, <code>transaction_type</code></p>
+<hr />
+<h2>2. Rippling Integration</h2>
+<h3>API Status</h3>
+<p><strong>No public employee-level API available.</strong> Rippling's API is gated behind enterprise admin credentials. Personal access tokens, developer portal, and employee-level endpoints all confirmed unavailable.</p>
+<h3>Solution: Calendar-Parsed + Manual Override Interview Income Tracker</h3>
+<p>Replace automated Rippling sync with income data parsed from Google Calendar events, plus manual overrides for edge cases. Interviews are scheduled by third parties (recruiters), so the user doesn't maintain the calendar — the parser reads whatever format they arrive in.</p>
+<h4>Interview Types &amp; Rates</h4>
+<table>
+<thead>
+<tr>
+  <th>Interview Type</th>
+  <th>Base Rate</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td>No Show</td>
+  <td>$75 (informational — no-shows pay $0, just tracked for records)</td>
+</tr>
+<tr>
+  <td>Coding / System Design / Behavioral</td>
+  <td>$85</td>
+</tr>
+<tr>
+  <td>Other</td>
+  <td>$115</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Tax scalar:</strong> 0.7 (applied to gross → net)</p>
+<h4>Income Tracking — Calendar Integration</h4>
+<p><strong>Auto-parsed from Google Calendar (read-only, populated by Apps Script):</strong></p>
+<table>
+<thead>
+<tr>
+  <th>Column</th>
+  <th>Type</th>
+  <th>Source</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td><code>date</code></td>
+  <td>Date</td>
+  <td>Calendar event start time</td>
+</tr>
+<tr>
+  <td><code>title</code></td>
+  <td>Text</td>
+  <td>Calendar event title</td>
+</tr>
+<tr>
+  <td><code>parsed_type</code></td>
+  <td>Text</td>
+  <td>$85 or $115 — determined by keyword parser (exact rules TBD on first data inspection)</td>
+</tr>
+<tr>
+  <td><code>status</code></td>
+  <td>Text</td>
+  <td>Past / Upcoming</td>
+</tr>
+</tbody>
+</table>
+<p>Parser rules will be informed by inspecting actual calendar events — the format varies by recruiter/scheduler and will be handled at integration time.</p>
+<p><strong>Manual Overrides (user-editable):</strong></p>
+<table>
+<thead>
+<tr>
+  <th>Column</th>
+  <th>Type</th>
+  <th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td><code>override_type</code></td>
+  <td>Dropdown</td>
+  <td>$85 → $115, $115 → $85, No Show ($75), No Change</td>
+</tr>
+<tr>
+  <td><code>date</code></td>
+  <td>Date</td>
+  <td>References the calendar event date</td>
+</tr>
+<tr>
+  <td><code>reason</code></td>
+  <td>Text</td>
+  <td>e.g. &quot;Turned into coaching at game time&quot;</td>
+</tr>
+</tbody>
+</table>
+<p><strong>No-Shows (manual, since they're removed from Calendar):</strong></p>
+<table>
+<thead>
+<tr>
+  <th>Column</th>
+  <th>Type</th>
+  <th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td><code>date</code></td>
+  <td>Date</td>
+  <td>When the no-show happened</td>
+</tr>
+<tr>
+  <td><code>notes</code></td>
+  <td>Text</td>
+  <td>Company or context</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Summary formula logic:</strong></p>
+<ul>
+<li><strong>Past confirmed income</strong> = (count of past $85 events × $85 × 0.7) + (count of past $115 events × $115 × 0.7), adjusted for overrides, minus no-shows</li>
+<li><strong>Upcoming potential</strong> = same but for future events, with <code>include_upcoming</code> checkbox toggle</li>
+<li><strong>Override precedence</strong> — overrides always win over parsed type</li>
+<li><strong>No-shows</strong> — subtracted from past count and filed under $75 rate (but $75 × 0.7 is irrelevant since they pay $0 — they just get excluded)</li>
+</ul>
+<h4>Rippling Data Extraction — Still Brainstorming</h4>
+<ul>
+<li>OCR from pay stub PDFs (download from Rippling dashboard)</li>
+<li>Browser extension to scrape the Rippling earnings page</li>
+<li>If Rippling ever opens an employee API, revisit</li>
+</ul>
+<hr />
+<h2>3. Spreadsheet Schema</h2>
+<p>The Google Sheet will have 4 tabs:</p>
+<h3>Tab 1: <code>transactions</code> — Raw bank/card transactions from Plaid</h3>
+<table>
+<thead>
+<tr>
+  <th>Column</th>
+  <th>Source</th>
+  <th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td><code>transaction_id</code></td>
+  <td>Plaid</td>
+  <td>Unique ID, use as dedup key</td>
+</tr>
+<tr>
+  <td><code>account_id</code></td>
+  <td>Plaid</td>
+  <td>Which account it came from</td>
+</tr>
+<tr>
+  <td><code>date</code></td>
+  <td>Plaid</td>
+  <td><code>authorized_date</code> preferred</td>
+</tr>
+<tr>
+  <td><code>name</code></td>
+  <td>Plaid</td>
+  <td>Merchant/description</td>
+</tr>
+<tr>
+  <td><code>merchant_name</code></td>
+  <td>Plaid</td>
+  <td>Clean merchant name</td>
+</tr>
+<tr>
+  <td><code>amount</code></td>
+  <td>Plaid</td>
+  <td>Positive = outflow; negative = credit</td>
+</tr>
+<tr>
+  <td><code>category</code></td>
+  <td>Plaid</td>
+  <td><code>personal_finance_category</code></td>
+</tr>
+<tr>
+  <td><code>payment_channel</code></td>
+  <td>Plaid</td>
+  <td>in store, online, other</td>
+</tr>
+<tr>
+  <td><code>pending</code></td>
+  <td>Plaid</td>
+  <td>TRUE/FALSE</td>
+</tr>
+<tr>
+  <td><code>currency</code></td>
+  <td>Plaid</td>
+  <td>ISO code</td>
+</tr>
+<tr>
+  <td><code>synced_at</code></td>
+  <td>Auto</td>
+  <td>Timestamp of last sync</td>
+</tr>
+</tbody>
+</table>
+<h3>Tab 2: <code>adjustments</code> — Manual off-budget entries</h3>
+<table>
+<thead>
+<tr>
+  <th>Column</th>
+  <th>Source</th>
+  <th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td><code>id</code></td>
+  <td>Auto</td>
+  <td>Row ID</td>
+</tr>
+<tr>
+  <td><code>date</code></td>
+  <td>Manual</td>
+  <td>Date of adjustment</td>
+</tr>
+<tr>
+  <td><code>description</code></td>
+  <td>Manual</td>
+  <td>e.g. &quot;Cash spent on groceries&quot;</td>
+</tr>
+<tr>
+  <td><code>amount</code></td>
+  <td>Manual</td>
+  <td>Positive = money in; Negative = money out</td>
+</tr>
+<tr>
+  <td><code>category</code></td>
+  <td>Manual</td>
+  <td>Cash, Refund Pending, Reimbursement, Debt, Gift, etc.</td>
+</tr>
+<tr>
+  <td><code>status</code></td>
+  <td>Manual</td>
+  <td>pending, cleared, reconciled</td>
+</tr>
+<tr>
+  <td><code>notes</code></td>
+  <td>Manual</td>
+  <td>Optional context</td>
+</tr>
+<tr>
+  <td><code>created_at</code></td>
+  <td>Auto</td>
+  <td>Timestamp</td>
+</tr>
+</tbody>
+</table>
+<h3>Tab 3: <code>interview_income</code> — Calendar-parsed interview income (Rippling replacement)</h3>
+<p><strong>Auto entries (read-only, from Calendar):</strong></p>
+<table>
+<thead>
+<tr>
+  <th>Column</th>
+  <th>Type</th>
+  <th>Source</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td><code>date</code></td>
+  <td>Date</td>
+  <td>Calendar event start time</td>
+</tr>
+<tr>
+  <td><code>title</code></td>
+  <td>Text</td>
+  <td>Calendar event title</td>
+</tr>
+<tr>
+  <td><code>parsed_type</code></td>
+  <td>Text</td>
+  <td>$85 or $115 (parser TBD on first data inspection)</td>
+</tr>
+<tr>
+  <td><code>status</code></td>
+  <td>Text</td>
+  <td>Past / Upcoming</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Manual overrides (user-editable):</strong></p>
+<table>
+<thead>
+<tr>
+  <th>Column</th>
+  <th>Type</th>
+  <th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td><code>override_type</code></td>
+  <td>Dropdown</td>
+  <td>$85→$115, $115→$85, No Show, No Change</td>
+</tr>
+<tr>
+  <td><code>override_date</code></td>
+  <td>Date</td>
+  <td>References the calendar event</td>
+</tr>
+<tr>
+  <td><code>reason</code></td>
+  <td>Text</td>
+  <td>Optional context</td>
+</tr>
+</tbody>
+</table>
+<p><strong>No-shows (manual):</strong></p>
+<table>
+<thead>
+<tr>
+  <th>Column</th>
+  <th>Type</th>
+  <th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td><code>ns_date</code></td>
+  <td>Date</td>
+  <td>When the no-show happened</td>
+</tr>
+<tr>
+  <td><code>ns_notes</code></td>
+  <td>Text</td>
+  <td>Company or context</td>
+</tr>
+</tbody>
+</table>
+<h3>Tab 4: <code>dashboard</code> — Summary &amp; &quot;True Available Money&quot; Calculation</h3>
+<table>
+<thead>
+<tr>
+  <th>Cell</th>
+  <th>Formula / Logic</th>
+  <th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td><strong>Total Bank Balance</strong></td>
+  <td>Sum of Plaid Balance API <code>available</code> balances across all accounts</td>
+  <td>Live from <code>/accounts/balance/get</code> — bank already factors pending holds into <code>available</code></td>
+</tr>
+<tr>
+  <td><strong>Net Adjustments</strong></td>
+  <td><code>=SUM(adjustments!amount)</code></td>
+  <td>Sum of all manual adjustments (cash, refunds, corrections)</td>
+</tr>
+<tr>
+  <td><strong>Actual Income (Past)</strong></td>
+  <td>Formula counting past events × rate × 0.7, applying overrides, excluding no-shows</td>
+  <td>Locked-in interview income</td>
+</tr>
+<tr>
+  <td><strong>Potential Income</strong></td>
+  <td>Same as actual + upcoming events (if toggled)</td>
+  <td>Past + optionally upcoming</td>
+</tr>
+<tr>
+  <td><strong>Pending Items (info only)</strong></td>
+  <td>Visible in adjustments tab with &quot;pending&quot; status</td>
+  <td>No longer subtracted — 99% go through, so they're counted in the balance</td>
+</tr>
+<tr>
+  <td><strong>True Available Money</strong></td>
+  <td><code>=Bank Balance + Net Adjustments + Actual Income</code></td>
+  <td><strong>Core number</strong> — pending is already factored in by the bank</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2>4. Implementation — Apps Script MVP</h2>
+<p>No long-term serverless version. Apps Script covers everything needed.</p>
+<pre><code>Plaid Link (manual, one-time setup for initial token)
+   ↓
+Google Apps Script (time-triggered + webhook-driven)
+   ├── fetchTransactions() → calls /transactions/sync with stored cursor
+   ├── appendToSheet() → writes new/changed transactions
+   ├── handleWebhook() → responds to SYNC_UPDATES_AVAILABLE
+   └── updateDashboard() → recalculates summary cells
+   ↓
+Manual: adjustments + interview counts typed directly into Sheet
+</code></pre>
+<h3>What Apps Script Handles</h3>
+<ul>
+<li><strong>Scheduled fetch</strong> — time-driven trigger every 12 hours (2x/day)</li>
+<li><strong>Balance fetch</strong> — calls <code>/accounts/balance/get</code> for each Item, writes live balances to dashboard</li>
+<li><strong>Webhook receiver</strong> — Plaid fires <code>SYNC_UPDATES_AVAILABLE</code> when new data lands</li>
+<li><strong>Dedup</strong> — uses <code>transaction_id</code> as key to avoid duplicates</li>
+<li><strong>Cursor &amp; token persistence</strong> — 4 access_tokens + 4 cursors stored in ScriptProperties (e.g. <code>cursor_ally</code>, <code>access_token_chase</code>)</li>
+<li><strong>Calendar parser</strong> — reads interview events via <code>CalendarApp</code>, classifies by type, writes to <code>interview_income</code> tab</li>
+<li><strong>Dashboard refresh</strong> — recalculates after each sync</li>
+</ul>
+<h3>What Remains Manual</h3>
+<ul>
+<li>Adjustments tab entries (cash, refunds, corrections)</li>
+<li>Interview overrides (type changes, no-shows) — lightweight, only when edge cases happen</li>
+</ul>
+<p><strong>Execution limit:</strong> Apps Script has 6-minute cap. Fine for ~4 accounts. If we hit the limit, we can split syncs per-account.</p>
+<hr />
+<h2>5. Cost Summary</h2>
+<table>
+<thead>
+<tr>
+  <th>Component</th>
+  <th>Cost</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td>Google Sheets</td>
+  <td>Free</td>
+</tr>
+<tr>
+  <td>Google Apps Script</td>
+  <td>Free</td>
+</tr>
+<tr>
+  <td>Plaid Trial Plan</td>
+  <td>Free (up to 10 Items, no API call limits)</td>
+</tr>
+<tr>
+  <td><strong>Total</strong></td>
+  <td><strong>$0</strong></td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2>6. Answered Open Questions</h2>
+<table>
+<thead>
+<tr>
+  <th>#</th>
+  <th>Question</th>
+  <th>Decision</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td>1</td>
+  <td>How many accounts?</td>
+  <td>5 accounts across 4 institutions (Ally, BofA, Chase, Discover) → ~4 Plaid Items</td>
+</tr>
+<tr>
+  <td>2</td>
+  <td>Plaid dev account?</td>
+  <td>✅ Done — signed up &amp; approved on Trial plan</td>
+</tr>
+<tr>
+  <td>3</td>
+  <td>Rippling preference?</td>
+  <td>Manual interview income tracker (see Section 2)</td>
+</tr>
+<tr>
+  <td>4</td>
+  <td>Deployment?</td>
+  <td>Google Apps Script only</td>
+</tr>
+<tr>
+  <td>5</td>
+  <td>Sandbox first?</td>
+  <td>Yes — develop &amp; test in Sandbox, then flip to Production</td>
+</tr>
+</tbody>
+</table>
+<h2>7. Pre-Flight Checklist</h2>
+<p>Stuff to have ready before we start typing code. Check off as you go.</p>
+<table>
+<thead>
+<tr>
+  <th>#</th>
+  <th>Item</th>
+  <th>Who</th>
+  <th>Status</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td>1</td>
+  <td>Plaid dev account on Trial plan</td>
+  <td>You</td>
+  <td>✅</td>
+</tr>
+<tr>
+  <td>2</td>
+  <td>Install CLASP: <code>pnpm install -g @google/clasp</code></td>
+  <td>You</td>
+  <td>☐</td>
+</tr>
+<tr>
+  <td>3</td>
+  <td><code>clasp login</code> — OAuth in browser</td>
+  <td>You</td>
+  <td>☐</td>
+</tr>
+<tr>
+  <td>4</td>
+  <td>Create Google Sheet named &quot;Finance Tracker&quot;</td>
+  <td>You</td>
+  <td>☐</td>
+</tr>
+<tr>
+  <td>5</td>
+  <td><code>clasp create --title &quot;Finance Tracker&quot; --type sheets --rootDir ~/.cline/appsscript</code></td>
+  <td>You</td>
+  <td>☐</td>
+</tr>
+<tr>
+  <td>6</td>
+  <td>Grab Plaid Sandbox <code>client_id</code> + <code>secret</code> from dashboard</td>
+  <td>You</td>
+  <td>☐</td>
+</tr>
+<tr>
+  <td>7</td>
+  <td>Set a dummy <code>redirect_uri</code> in Plaid Dashboard (any valid-looking URL, e.g. <code>https://script.google.com</code>)</td>
+  <td>You</td>
+  <td>☐</td>
+</tr>
+<tr>
+  <td>8</td>
+  <td>Create a GitHub repo named <code>finance-tracker</code></td>
+  <td>You</td>
+  <td>☐</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2>8. Implementation Milestones</h2>
+<h3>Project Structure</h3>
+<pre><code>~/.cline/appsscript/          # Git repo root
+├── .gitignore                # Ignores .clasprc.json (auth tokens)
+├── .clasp.json               # CLASP project config
+├── appsscript.json           # Apps Script manifest (OAuth scopes declared here)
+├── Debug.gs                  # Logging system — every function calls this
+├── Plaid.gs                  # Plaid API: tokens, sync, balances
+├── Calendar.gs               # Calendar parser for interview income
+├── Dashboard.gs              # The 3 numbers + month selector
+├── Manual.gs                 # Adjustments, overrides, no-shows handling
+└── Tests.gs                  # Test functions — kept alongside production code
+</code></pre>
+<p><strong>Git workflow:</strong> I write → git commit → <code>clasp push</code> → you run. You fix in the editor → <code>clasp pull</code> → git commit.</p>
+<hr />
+<h3>I1: Foundation + Test Harness (~15 min)</h3>
+<p><strong>What you get:</strong> CLASP pipeline works, Debug tab exists, we can talk to Plaid.</p>
+<table>
+<thead>
+<tr>
+  <th>Step</th>
+  <th>Who</th>
+  <th>What</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td>I1.1</td>
+  <td><strong>You</strong></td>
+  <td>Tick off Pre-Flight Checklist items 1–8 (except GitHub)</td>
+</tr>
+<tr>
+  <td>I1.2</td>
+  <td><strong>You</strong></td>
+  <td>Create GitHub repo (<code>finance-tracker</code>) — public or private, your call</td>
+</tr>
+<tr>
+  <td>I1.3</td>
+  <td><strong>Me</strong></td>
+  <td>Init git in <code>~/.cline/appsscript/</code>, create <code>.gitignore</code>, <code>.gitattributes</code></td>
+</tr>
+<tr>
+  <td>I1.4</td>
+  <td><strong>You</strong></td>
+  <td><code>git remote add origin &lt;repo-url&gt;</code></td>
+</tr>
+<tr>
+  <td>I1.5</td>
+  <td><strong>Me</strong></td>
+  <td>Run <code>clasp create</code> → generates <code>.clasp.json</code>, <code>appsscript.json</code> — first commit + push (just config)</td>
+</tr>
+<tr>
+  <td>I1.6</td>
+  <td><strong>Me</strong></td>
+  <td>Write Debug.gs — hidden &quot;debug&quot; tab + <code>log()</code> + <code>ensureDebugTab()</code></td>
+</tr>
+<tr>
+  <td>I1.7</td>
+  <td><strong>Me</strong></td>
+  <td>Write Tests.gs with <code>testDebugLogging()</code> — proves the log system works</td>
+</tr>
+<tr>
+  <td>I1.8</td>
+  <td><strong>Me</strong></td>
+  <td>Write <code>testPlaidConnection()</code> — calls Plaid sandbox <code>/link/token/create</code>, logs full response</td>
+</tr>
+<tr>
+  <td>I1.9</td>
+  <td><strong>Me</strong></td>
+  <td>Commit all code + <code>clasp push</code></td>
+</tr>
+<tr>
+  <td>I1.10</td>
+  <td><strong>You</strong></td>
+  <td>Run <code>testPlaidConnection()</code> → authorize Sheets + URL Fetch → paste Debug tab output</td>
+</tr>
+<tr>
+  <td>I1.11</td>
+  <td><strong>Me</strong></td>
+  <td>Review output, confirm HTTP layer is correct, fix any issues, push fix</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Test:</strong> <code>testPlaidConnection()</code> returns a link_token and logs it. If it does, Plaid API works.</p>
+<hr />
+<h3>I2: Single Account Sync (~30 min)</h3>
+<p><strong>What you get:</strong> One fake bank's transactions appearing in your Sheet.</p>
+<table>
+<thead>
+<tr>
+  <th>Step</th>
+  <th>Who</th>
+  <th>What</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td>I2.1</td>
+  <td><strong>Me</strong></td>
+  <td>Write Plaid.gs — <code>generateSandboxToken()</code>, <code>exchangePublicToken()</code>, <code>fetchTransactions()</code></td>
+</tr>
+<tr>
+  <td>I2.2</td>
+  <td><strong>Me</strong></td>
+  <td>Write cursor persistence — store/retrieve cursor from ScriptProperties</td>
+</tr>
+<tr>
+  <td>I2.3</td>
+  <td><strong>Me</strong></td>
+  <td>Wire to Debug tab — each API call logs request + response for review</td>
+</tr>
+<tr>
+  <td>I2.4</td>
+  <td><strong>You</strong></td>
+  <td>Run <code>testSandboxAccountLink()</code> → connects a fake bank (Platypus Bank), logs the access_token</td>
+</tr>
+<tr>
+  <td>I2.5</td>
+  <td><strong>Me</strong></td>
+  <td>Write seed data — run <code>fetchTransactions()</code> to pull initial batch for the linked account</td>
+</tr>
+<tr>
+  <td>I2.6</td>
+  <td><strong>You</strong></td>
+  <td>Verify: transactions appear in the <code>transactions</code> tab, amounts/pending/categories look right</td>
+</tr>
+<tr>
+  <td>I2.7</td>
+  <td><strong>You</strong></td>
+  <td><code>git push</code></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Test:</strong> <code>testSandboxAccountLink()</code> + <code>testSyncSingleItem()</code> — linked account's transactions are in the sheet.</p>
+<hr />
+<h3>I3: Multi-Account + Balances (~30 min)</h3>
+<p><strong>What you get:</strong> All 4 fake banks syncing with live balances.</p>
+<table>
+<thead>
+<tr>
+  <th>Step</th>
+  <th>Who</th>
+  <th>What</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td>I3.1</td>
+  <td><strong>Me</strong></td>
+  <td>Extend Plaid.gs — link remaining 3 sandbox accounts, manage 4 access_tokens + 4 cursors</td>
+</tr>
+<tr>
+  <td>I3.2</td>
+  <td><strong>Me</strong></td>
+  <td>Write <code>fetchBalances()</code> — calls <code>/accounts/balance/get</code>, distinguishes credit vs debit accounts</td>
+</tr>
+<tr>
+  <td>I3.3</td>
+  <td><strong>Me</strong></td>
+  <td>Write <code>testMultiAccountSync()</code> — syncs all 4, logs each cursor + error if any</td>
+</tr>
+<tr>
+  <td>I3.4</td>
+  <td><strong>You</strong></td>
+  <td>Run <code>testMultiAccountSync()</code> → paste Debug tab output, check all 4 Items synced</td>
+</tr>
+<tr>
+  <td>I3.5</td>
+  <td><strong>You</strong></td>
+  <td>Verify: transactions tab has data from 4 accounts, balance tab shows account types correctly</td>
+</tr>
+<tr>
+  <td>I3.6</td>
+  <td><strong>You</strong></td>
+  <td><code>git push</code></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Test:</strong> <code>testMultiAccountSync()</code> — all 4 Items have cursors, balances show correct account types.</p>
+<hr />
+<h3>I4: Webhooks — Auto-Sync (~30 min)</h3>
+<p><strong>What you get:</strong> New transactions appear in the sheet automatically — no manual trigger needed.</p>
+<table>
+<thead>
+<tr>
+  <th>Step</th>
+  <th>Who</th>
+  <th>What</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td>I4.1</td>
+  <td><strong>Me</strong></td>
+  <td>Write <code>doPost()</code> webhook receiver in Debug.gs — logs raw POST body to debug tab</td>
+</tr>
+<tr>
+  <td>I4.2</td>
+  <td><strong>Me</strong></td>
+  <td>Write <code>testWebhookDump()</code> — hardcoded test payload to prove receiver works</td>
+</tr>
+<tr>
+  <td>I4.3</td>
+  <td><strong>You</strong></td>
+  <td><code>clasp deploy</code> → get web app URL → authorize</td>
+</tr>
+<tr>
+  <td>I4.4</td>
+  <td><strong>You</strong></td>
+  <td>Paste URL into Plaid Sandbox webhook configuration</td>
+</tr>
+<tr>
+  <td>I4.5</td>
+  <td><strong>You</strong></td>
+  <td>Trigger a sandbox webhook from Plaid Dashboard → paste Debug tab output</td>
+</tr>
+<tr>
+  <td>I4.6</td>
+  <td><strong>Me</strong></td>
+  <td>Confirm payload format, wire webhook to trigger <code>fetchTransactions()</code> for the correct Item</td>
+</tr>
+<tr>
+  <td>I4.7</td>
+  <td><strong>You</strong></td>
+  <td>Verify: new fake transactions appear without you running anything manually</td>
+</tr>
+<tr>
+  <td>I4.8</td>
+  <td><strong>You</strong></td>
+  <td><code>git push</code></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Test:</strong> Trigger a sandbox webhook → new transaction appears in sheet within 30 seconds.</p>
+<hr />
+<h3>I5: Dashboard — The 3 Numbers (~45 min) ⭐</h3>
+<p><strong>What you get:</strong> Your Actual Spend, Net Income, and Daily Budget visible in the dashboard.</p>
+<table>
+<thead>
+<tr>
+  <th>Step</th>
+  <th>Who</th>
+  <th>What</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td>I5.1</td>
+  <td><strong>Me</strong></td>
+  <td>Write Dashboard.gs — <code>monthSelector</code> cell, <code>updateDashboard()</code> function</td>
+</tr>
+<tr>
+  <td>I5.2</td>
+  <td><strong>Me</strong></td>
+  <td>Write <strong>Actual Spend</strong> formula — sum of outflows excluding transfers (uses Plaid <code>personal_finance_category</code>)</td>
+</tr>
+<tr>
+  <td>I5.3</td>
+  <td><strong>Me</strong></td>
+  <td>Write <strong>Net Income</strong> formula — $9,000 + interview income + manual income - spend</td>
+</tr>
+<tr>
+  <td>I5.4</td>
+  <td><strong>Me</strong></td>
+  <td>Write <strong>Daily Budget</strong> formula — <code>(Net Income - target) / days_remaining</code> with target cell ($4,000 default)</td>
+</tr>
+<tr>
+  <td>I5.5</td>
+  <td><strong>Me</strong></td>
+  <td>Add month selector — change one cell to view any month's data</td>
+</tr>
+<tr>
+  <td>I5.6</td>
+  <td><strong>You</strong></td>
+  <td>Run <code>updateDashboard()</code> → authorize any remaining scopes</td>
+</tr>
+<tr>
+  <td>I5.7</td>
+  <td><strong>You</strong></td>
+  <td>Verify: switch month selector, check numbers make sense with fake data</td>
+</tr>
+<tr>
+  <td>I5.8</td>
+  <td><strong>Me</strong></td>
+  <td>Push fixes if formulas are off (common: credit card sign handling)</td>
+</tr>
+<tr>
+  <td>I5.9</td>
+  <td><strong>You</strong></td>
+  <td><code>git push</code></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Test:</strong> Select a month with fake transactions → all 3 numbers show correct values.</p>
+<hr />
+<h3>I6: Calendar Parser — Interview Income (~30 min)</h3>
+<p><strong>What you get:</strong> Interview income auto-populates from Google Calendar.</p>
+<table>
+<thead>
+<tr>
+  <th>Step</th>
+  <th>Who</th>
+  <th>What</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td>I6.1</td>
+  <td><strong>Me</strong></td>
+  <td>Write Calendar.gs — <code>dumpCalendarEvents()</code> logs recent event titles + dates to Debug tab</td>
+</tr>
+<tr>
+  <td>I6.2</td>
+  <td><strong>You</strong></td>
+  <td>Run it → authorize Calendar API → paste output</td>
+</tr>
+<tr>
+  <td>I6.3</td>
+  <td><strong>Both</strong></td>
+  <td>Define parser rules based on what your actual event titles look like</td>
+</tr>
+<tr>
+  <td>I6.4</td>
+  <td><strong>Me</strong></td>
+  <td>Write <code>parseCalendarEvents()</code> — classifies each event as $85 or $115, writes to <code>interview_income</code> tab</td>
+</tr>
+<tr>
+  <td>I6.5</td>
+  <td><strong>Me</strong></td>
+  <td>Write override + no-show input areas into Manual.gs</td>
+</tr>
+<tr>
+  <td>I6.6</td>
+  <td><strong>Me</strong></td>
+  <td>Wire interview income into Dashboard.gs — feeds Net Income</td>
+</tr>
+<tr>
+  <td>I6.7</td>
+  <td><strong>You</strong></td>
+  <td>Verify: past interviews counted, upcoming appear, overrides change the numbers</td>
+</tr>
+<tr>
+  <td>I6.8</td>
+  <td><strong>You</strong></td>
+  <td><code>git push</code></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Test:</strong> <code>dumpCalendarEvents()</code> renders sample events → <code>parseCalendarEvents()</code> populates interview_income tab correctly.</p>
+<hr />
+<h3>I7: Manual Adjustments (~20 min)</h3>
+<p><strong>What you get:</strong> Refunds, cash, Venmo, type corrections, no-shows all feed into the dashboard.</p>
+<table>
+<thead>
+<tr>
+  <th>Step</th>
+  <th>Who</th>
+  <th>What</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td>I7.1</td>
+  <td><strong>Me</strong></td>
+  <td>Finalize adjustments tab — ensure all manual income/expense columns work</td>
+</tr>
+<tr>
+  <td>I7.2</td>
+  <td><strong>Me</strong></td>
+  <td>Wire manual + override data into Dashboard formulas</td>
+</tr>
+<tr>
+  <td>I7.3</td>
+  <td><strong>You</strong></td>
+  <td>Add a few test entries (refund, Venmo deposit, interview override)</td>
+</tr>
+<tr>
+  <td>I7.4</td>
+  <td><strong>Both</strong></td>
+  <td>Verify: Net Income changes correctly when you add manual income</td>
+</tr>
+<tr>
+  <td>I7.5</td>
+  <td><strong>You</strong></td>
+  <td><code>git push</code></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Test:</strong> Add $100 refund → Net Income goes up by $100.</p>
+<hr />
+<h3>I8: Production Flip (~30 min)</h3>
+<p><strong>What you get:</strong> Live with your real bank accounts.</p>
+<table>
+<thead>
+<tr>
+  <th>Step</th>
+  <th>Who</th>
+  <th>What</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td>I8.1</td>
+  <td><strong>You</strong></td>
+  <td>Swap Plaid keys in ScriptProperties from Sandbox → Trial (Production)</td>
+</tr>
+<tr>
+  <td>I8.2</td>
+  <td><strong>You</strong></td>
+  <td>Open Plaid Link in browser for each real account (Ally, BofA, Chase, Discover)</td>
+</tr>
+<tr>
+  <td>I8.3</td>
+  <td><strong>Me</strong></td>
+  <td>Run initial full sync — pulls up to 2 years of transaction history</td>
+</tr>
+<tr>
+  <td>I8.4</td>
+  <td><strong>You</strong></td>
+  <td>Update Plaid Dashboard webhook to point at production web app URL</td>
+</tr>
+<tr>
+  <td>I8.5</td>
+  <td><strong>Both</strong></td>
+  <td>Verify: all 4 Items sync, balances are correct, dashboard numbers make sense with real data</td>
+</tr>
+<tr>
+  <td>I8.6</td>
+  <td><strong>Me</strong></td>
+  <td>Adjust any formulas that assumed sandbox data format</td>
+</tr>
+<tr>
+  <td>I8.7</td>
+  <td><strong>You</strong></td>
+  <td><code>git push</code> with a &quot;v1.0&quot; tag</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Test:</strong> All 3 numbers in the dashboard reflect your real financial life.</p>
+<hr />
+<h3>I9: Polish (~30 min)</h3>
+<p><strong>What you get:</strong> Robustness — edge cases handled, you get emails on failure, monthly records preserved.</p>
+<table>
+<thead>
+<tr>
+  <th>Step</th>
+  <th>Who</th>
+  <th>What</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td>I9.1</td>
+  <td><strong>Me</strong></td>
+  <td>Add transaction ignore rules — filter out recurring/internal transfers from spend calculation</td>
+</tr>
+<tr>
+  <td>I9.2</td>
+  <td><strong>Me</strong></td>
+  <td>Wire error notifications — <code>MailApp.sendEmail()</code> on sync failures, logged to Debug tab</td>
+</tr>
+<tr>
+  <td>I9.3</td>
+  <td><strong>Me</strong></td>
+  <td>Write <code>generateMonthlySummary()</code> — snapshots month-end numbers to a summary tab</td>
+</tr>
+<tr>
+  <td>I9.4</td>
+  <td><strong>You</strong></td>
+  <td>Add a few edge-case transactions, verify ignore rules work</td>
+</tr>
+<tr>
+  <td>I9.5</td>
+  <td><strong>You</strong></td>
+  <td><code>git push</code> final version</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Test:</strong> Simulate a Plaid API error → email arrives with the Debug tab output attached.</p>
+<hr />
+<h3>Testing Strategy Summary</h3>
+<table>
+<thead>
+<tr>
+  <th>Layer</th>
+  <th>How we validate</th>
+  <th>Example</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td><strong>Config/plumbing</strong></td>
+  <td>Test function per integration point</td>
+  <td><code>testPlaidConnection()</code> validates HTTP + auth in one run</td>
+</tr>
+<tr>
+  <td><strong>Data format</strong></td>
+  <td>Debug tab dumps raw API output for review</td>
+  <td>First sync logs every field Plaid returns</td>
+</tr>
+<tr>
+  <td><strong>Business logic</strong></td>
+  <td>Verify with fake data before production</td>
+  <td>I5 tested with sandbox data before I8 goes live</td>
+</tr>
+<tr>
+  <td><strong>Dashboard formulas</strong></td>
+  <td>Change a cell, see the number update</td>
+  <td>Add $100 refund, Net Income goes up by $100</td>
+</tr>
+<tr>
+  <td><strong>End-to-end</strong></td>
+  <td><code>clasp push</code> → run → check Debug tab → fix → re-push</td>
+  <td>Standard cycle for every iteration</td>
+</tr>
+</tbody>
+</table>
+
+</body>
+</html>

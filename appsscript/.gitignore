@@ -1,0 +1,8 @@
+# CLASP auth tokens (never commit these)
+.clasprc*
+
+# macOS
+.DS_Store
+
+# Google Cloud credentials (if any)
+*.json.enc

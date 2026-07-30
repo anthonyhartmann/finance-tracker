@@ -1,0 +1,323 @@
+<!DOCTYPE html>
+<html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'>
+<title>dashboard prd</title>
+<style>
+body { font-family: -apple-system, system-ui, sans-serif; max-width: 900px; margin: 2rem auto; padding: 0 1.5rem; color: #1a1a1a; line-height: 1.6; font-size: 15px; }
+h1 { font-size: 1.6rem; border-bottom: 2px solid #e5e7eb; padding-bottom: 0.5rem; }
+h2 { font-size: 1.3rem; margin-top: 2rem; color: #374151; }
+h3 { font-size: 1.1rem; color: #4b5563; }
+table { border-collapse: collapse; width: 100%; margin: 1rem 0; }
+th, td { border: 1px solid #d1d5db; padding: 8px 12px; text-align: left; font-size: 0.9rem; }
+th { background: #f9fafb; font-weight: 600; }
+code { background: #f3f4f6; padding: 2px 6px; border-radius: 4px; font-size: 0.85em; }
+pre { background: #1e293b; color: #e2e8f0; padding: 1rem; border-radius: 8px; overflow-x: auto; font-size: 0.85rem; line-height: 1.5; }
+pre code { background: none; padding: 0; color: inherit; }
+blockquote { border-left: 4px solid #3b82f6; margin: 1rem 0; padding: 0.5rem 1rem; background: #eff6ff; border-radius: 0 8px 8px 0; }
+hr { border: none; border-top: 1px solid #e5e7eb; margin: 2rem 0; }
+strong { color: #111827; }
+ul, ol { padding-left: 1.5rem; }
+li { margin-bottom: 0.3rem; }
+</style></head><body><h1>Cline Agent Dashboard — PRD</h1>
+<blockquote>
+<p><strong>Document:</strong> Product Requirements Document
+<strong>Date:</strong> 2026-07-26
+<strong>Version:</strong> v1.0
+<strong>Status:</strong> Draft</p>
+</blockquote>
+<hr />
+<h2>1. Executive Summary</h2>
+<p>The Cline Agent Dashboard is a lightweight, single-process local web dashboard that displays all Cline CLI sessions in a browser. It runs alongside the existing hub-daemon on the user's machine, reading session data to provide a real-time overview of running, completed, failed, and idle agent sessions. The user can open any session to resume it directly from the browser.</p>
+<p><strong>Why not built-in?</strong> Cline ships with Kanban (<code>npx kanban</code>) for parallel agents and a TUI, but neither provides a persistent web dashboard for viewing session history, status, and project context at a glance. No community packages exist for this either.</p>
+<hr />
+<h2>2. Problem Statement</h2>
+<p>The user runs Cline CLI extensively (50+ sessions across 24 hours). Sessions may be running in the background (via <code>--zen</code>), completed, failed, or idle. Currently there is no way to:</p>
+<ul>
+<li>See all sessions in one place with live status</li>
+<li>Quickly identify which sessions are stalled or running</li>
+<li>Filter out trivial ad-hoc queries (&quot;test&quot;, &quot;exit&quot;, single words)</li>
+<li>Resume a past session by clicking a button</li>
+<li>View session metadata (project, model, duration, cost) at a glance</li>
+</ul>
+<h2>3. Goals — In Scope (v1)</h2>
+<table>
+<thead>
+<tr>
+  <th>Goal</th>
+  <th>Priority</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td>Display all root sessions (not sub-agents) in a browser table</td>
+  <td>P0</td>
+</tr>
+<tr>
+  <td>Live status badges: running (green), idle (yellow), completed (gray), failed (red), stale (orange)</td>
+  <td>P0</td>
+</tr>
+<tr>
+  <td>Stale detection via <code>kill -0 &lt;pid&gt;</code></td>
+  <td>P0</td>
+</tr>
+<tr>
+  <td><strong>Chat panel:</strong> click a session → view conversation history in real-time</td>
+  <td>P0</td>
+</tr>
+<tr>
+  <td><strong>Send messages:</strong> type in browser, agent responds in the same session</td>
+  <td>P0</td>
+</tr>
+<tr>
+  <td>&quot;Open&quot; button — runs <code>cline --id &lt;sessionId&gt; -c &lt;cwd&gt;</code> as fallback</td>
+  <td>P1</td>
+</tr>
+<tr>
+  <td>Session metadata: title/prompt, project path, model, start time, duration, cost</td>
+  <td>P1</td>
+</tr>
+<tr>
+  <td>Toggle to hide trivial one-word sessions</td>
+  <td>P2</td>
+</tr>
+<tr>
+  <td>Sortable columns (by status, start time, project)</td>
+  <td>P2</td>
+</tr>
+</tbody>
+</table>
+<h2>4. Goals — Out of Scope (v1)</h2>
+<ul>
+<li>Desktop notifications (v2)</li>
+<li>Charts or analytics (v2)</li>
+<li>Auth or multi-user (never — local only)</li>
+<li>Mobile layout (desktop only)</li>
+</ul>
+<h2>5. UI Framework</h2>
+<p><strong>Install, don't build.</strong> The frontend uses existing libraries loaded via CDN — zero build step, zero npm dependencies.</p>
+<table>
+<thead>
+<tr>
+  <th>Library</th>
+  <th>Purpose</th>
+  <th>CDN</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td><strong>Pico CSS</strong></td>
+  <td>Base styling (classless, dark mode, components)</td>
+  <td><code>https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css</code></td>
+</tr>
+<tr>
+  <td><strong>Alpine.js</strong></td>
+  <td>Lightweight reactivity (tab switching, toggles, message streaming)</td>
+  <td><code>https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js</code></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Why Pico CSS?</strong> Classless — add the <code>&lt;link&gt;</code> and plain HTML looks great. Tables, cards, nav, forms, and modals all styled out of the box. Dark mode via <code>data-theme=&quot;dark&quot;</code>.</p>
+<p><strong>Why Alpine.js?</strong> 15KB. Handles the chat panel's message list, tab switching between dashboard and chat, and the &quot;hide trivial&quot; toggle without React/Vue build tooling. Pure HTML directives (<code>x-data</code>, <code>x-show</code>, <code>x-for</code>).</p>
+<p><strong>Why not Tailwind/shadcn?</strong> Tailwind requires a build step or a massive CDN payload. shadcn/ui requires React + build. We want single-file, zero-build, copy-paste deployment.</p>
+<p>Before building, we surveyed the ecosystem for existing solutions:</p>
+<table>
+<thead>
+<tr>
+  <th>Source</th>
+  <th>Result</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td><code>npm search cline dashboard</code></td>
+  <td>No packages found. The <code>cline-dashboard</code> package does not exist.</td>
+</tr>
+<tr>
+  <td><code>npm search agent dashboard</code></td>
+  <td>No relevant results for Cline/agent session dashboards.</td>
+</tr>
+<tr>
+  <td>Cline GitHub repo &amp; docs</td>
+  <td>No built-in dashboard mentioned. The project has Kanban (task board) and TUI but no session history viewer.</td>
+</tr>
+<tr>
+  <td><code>@cline/core</code> SDK</td>
+  <td>✅ Has <code>HubUIClient</code> class with <code>listSessions()</code> and <code>subscribeUI()</code> — this is the <strong>official</strong> way to build hub-connected UIs, used internally by the menu bar app and VS Code extension.</td>
+</tr>
+<tr>
+  <td>Open source ecosystem</td>
+  <td>No pre-built dashboard for Cline exists. This is a common need for agentic developers but remains unsolved by existing tools.</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Decision:</strong> Build our own dashboard, leveraging <code>@cline/core</code>'s <code>HubUIClient</code> for the hub connection layer — no raw WebSocket protocol work needed.</p>
+<h2>6. User Flows</h2>
+<h3>6.1 Open Dashboard</h3>
+<ol>
+<li>Run <code>node dashboard.js</code> in a terminal</li>
+<li>Dashboard starts on <code>http://localhost:&lt;port&gt;</code>, logs the URL</li>
+<li>Open URL in a browser tab — table populates immediately</li>
+<li>Real-time updates arrive via SSE as sessions change</li>
+</ol>
+<h3>6.2 Scan Sessions</h3>
+<ol>
+<li>Table columns: Status, Title, Project, Model, Started, Duration, Cost, Actions</li>
+<li>Color-coded badges for instant visual scanning</li>
+<li>Running sessions sort to top</li>
+<li>&quot;Hide trivial&quot; toggle collapses one-word prompts</li>
+</ol>
+<h3>6.3 Chat with a Session</h3>
+<ol>
+<li>User clicks any session row → chat panel opens (side drawer or modal)</li>
+<li>Dashboard loads conversation history from <code>~/.cline/data/sessions/&lt;id&gt;/&lt;id&gt;.messages.json</code></li>
+<li>Messages render with role badges (user / assistant / tool)</li>
+<li>User types in the input box and hits Enter</li>
+<li>Dashboard sends the message to the hub via <code>HubSessionClient</code></li>
+<li>Agent processes the message and streams the response back</li>
+<li>New messages appear in real-time via SSE push</li>
+<li>If hub send is unavailable, &quot;Open in Terminal&quot; button is shown as fallback</li>
+</ol>
+<h3>6.4 Resume Session (Fallback)</h3>
+<ol>
+<li>Find the session → click &quot;Open in Terminal&quot;</li>
+<li>Action: <code>cline --id &lt;sessionId&gt; -c &lt;cwd&gt;</code> (confirmed in CLI docs)</li>
+<li>Terminal opens with the session active; user types there</li>
+</ol>
+<h3>6.5 Identify Stale Sessions</h3>
+<ol>
+<li>A &quot;running&quot; session that died (hub didn't notice)</li>
+<li>Dashboard runs <code>kill -0 &lt;pid&gt;</code> — non-zero exit → mark as &quot;stale&quot; (orange)</li>
+<li>User can click to open in terminal or ignore</li>
+</ol>
+<h2>7. Data Source Analysis</h2>
+<h3>Approach A: <code>cline history --json</code> (Original Plan)</h3>
+<ul>
+<li><strong>Works in this env?</strong> ❌ No — CLI binary always tries to bind port 25463, which the running hub already holds</li>
+<li><strong>Env vars tested:</strong> <code>CLINE_HUB_ADDRESS</code>, <code>CLINE_SESSION_BACKEND_MODE</code> — binary still binds to <code>127.0.0.1:25463</code></li>
+<li><strong>Verdict:</strong> Blocked. Not viable without killing the hub daemon.</li>
+</ul>
+<h3>Approach B: SQLite <code>sessions.db</code></h3>
+<ul>
+<li><strong>Path:</strong> <code>~/.cline/data/db/sessions.db</code></li>
+<li><strong>Access:</strong> via <code>sqlite3</code> CLI (pre-installed on macOS) — zero npm dependencies</li>
+<li><strong>Schema:</strong> Rich, well-structured. Columns for all needed data.</li>
+<li><strong>Verdict:</strong> Viable fallback, but requires subprocess spawning per query. No push updates.</li>
+</ul>
+<h3>Approach C: <code>@cline/core</code> HubUIClient ✅ (Recommended)</h3>
+<ul>
+<li><strong>What it is:</strong> The official TypeScript client library for the Cline hub daemon's WebSocket protocol. Already installed as a dependency of the <code>cline</code> CLI at <code>~/.asdf/.../node_modules/@cline/core/</code>.</li>
+<li><strong>Connect:</strong> <code>new HubUIClient({ address, authToken })</code> — reads auth token from <code>~/.cline/data/locks/hub/production.json</code></li>
+<li><strong>List sessions:</strong> <code>client.listSessions(limit)</code> — returns <code>SessionRecord[]</code> with all metadata</li>
+<li><strong>Push updates:</strong> <code>client.subscribeUI({ onSessionCreated, onSessionUpdated, onSessionDetached })</code> — real-time without polling</li>
+<li><strong>Verified:</strong> ✅ Tested successfully — connects in &lt;100ms, returns 45 sessions with full metadata, registers as a named client</li>
+<li><strong>Zero dependencies:</strong> Already installed globally; we just <code>require()</code> from the existing path</li>
+</ul>
+<h3>Recommendation</h3>
+<p><strong>Use <code>HubUIClient</code> from <code>@cline/core</code> for v1.</strong> No polling needed — push updates give real-time session tracking. No npm install needed. Reliable, official, supported.</p>
+<hr />
+<h2>8. Risks</h2>
+<table>
+<thead>
+<tr>
+  <th>Risk</th>
+  <th>Likelihood</th>
+  <th>Mitigation</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td>Cline upgrades break <code>@cline/core</code> API</td>
+  <td>Low</td>
+  <td>Pin to the currently installed version; exports are stable</td>
+</tr>
+<tr>
+  <td>Hub lock file moves/renames</td>
+  <td>Very Low</td>
+  <td>Fall back to probing hub with common paths</td>
+</tr>
+<tr>
+  <td>Hub auth token changes</td>
+  <td>Low</td>
+  <td>Re-read lock file on reconnect</td>
+</tr>
+<tr>
+  <td>WebSocket disconnects</td>
+  <td>Low</td>
+  <td><code>HubUIClient</code> has built-in reconnect logic</td>
+</tr>
+<tr>
+  <td>Sandbox blocks WebSocket</td>
+  <td>Very Low</td>
+  <td>Loopback connections are unrestricted</td>
+</tr>
+</tbody>
+</table>
+<h2>10. Architecture Overview</h2>
+<pre><code>Browser Tab (Pico CSS + Alpine.js)
+  +-- Session list table  ←── GET /api/sessions + SSE /api/events
+  +-- Chat panel          ←── GET /api/messages/:id + SSE /api/events
+  |     +-- message history (read from .messages.json)
+  |     +-- input box     →── POST /api/send/:id
+  |     +-- real-time stream (new messages pushed via SSE)
+  |
+  |      HTTP (localhost)
+      v
+node dashboard.js
+  +-- HubUIClient    ──WebSocket──▶  hub-daemon (:25463)
+  |     ├─ listSessions()           (session list + metadata)
+  |     ├─ subscribeUI()  ──▶  SSE broadcast
+  |     └─ listClients()
+  |
+  +-- HubSessionClient ──WebSocket──▶  hub-daemon (:25463)
+  |     ├─ readMessages()           (conversation history)
+  |     ├─ sendRuntimeSession()     (send user message)
+  |     └─ streamEvents()           (real-time responses)
+  |
+  +-- fs.watch() on ~/.cline/data/sessions/*/*.messages.json
+  |     (fallback for message streaming if hub events miss)
+  |
+  +-- HTTP Server (node:http)
+        ├─ GET /                  → 200 index.html
+        ├─ GET /api/sessions      → 200 [{session}, …]
+        ├─ GET /api/events        → 200 SSE stream
+        ├─ GET /api/messages/:id  → 200 { messages: [...] }
+        ├─ POST /api/send/:id     → 200 (send message to session)
+        └─ POST /api/open/:id     → 200 (opens terminal)
+
+~/.cline/data/locks/hub/production.json  ← auth token
+cline hub-daemon (PID 79391)
+  +-- session state (SQLite + in-memory)
+  +-- pushes events to all subscribers
+  +-- writes messages to ~/.cline/data/sessions/&lt;id&gt;/&lt;id&gt;.messages.json
+</code></pre>
+<h2>10. Success Metrics</h2>
+<table>
+<thead>
+<tr>
+  <th>Metric</th>
+  <th>Target</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td>Dashboard loads &lt;500ms</td>
+  <td>50 sessions rendered</td>
+</tr>
+<tr>
+  <td>Push update latency</td>
+  <td>&lt;100ms from hub event to UI update</td>
+</tr>
+<tr>
+  <td>Memory</td>
+  <td>&lt;30 MB RSS</td>
+</tr>
+<tr>
+  <td>Uncaught exceptions</td>
+  <td>Zero</td>
+</tr>
+<tr>
+  <td>Hub WebSocket uptime</td>
+  <td>Auto-reconnect on disconnect</td>
+</tr>
+</tbody>
+</table>
+</body></html>

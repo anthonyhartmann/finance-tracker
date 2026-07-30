@@ -1,0 +1,12 @@
+import { sheet } from '../adapter';
+export const ensureTab = sheet.ensureTab.bind(sheet);
+export const getValues = sheet.getValues.bind(sheet);
+export const appendRow = sheet.appendRow.bind(sheet);
+export const setValues = sheet.setValues.bind(sheet);
+export const clearTab = sheet.clearTab.bind(sheet);
+export const getCell = sheet.getCell.bind(sheet);
+export const setCell = sheet.setCell.bind(sheet);
+export const copySheet = sheet.copySheet.bind(sheet);
+export const deleteSheet = sheet.deleteSheet.bind(sheet);
+export const renameSheet = sheet.renameSheet.bind(sheet);
+export { sheet };

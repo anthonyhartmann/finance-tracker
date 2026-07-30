@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>GS → TS Migration Plan</title>
+<style>
+  body { font-family: -apple-system, sans-serif; max-width: 800px; margin: 2rem auto; padding: 0 1rem; color: #1a1a1a; background: #fafafa; }
+  h1 { border-bottom: 3px solid #1565c0; padding-bottom: 0.5rem; }
+  h2 { color: #333; margin-top: 2rem; }
+  table { width: 100%; border-collapse: collapse; margin: 1rem 0; }
+  th, td { padding: 0.5rem 0.75rem; border: 1px solid #ddd; text-align: left; }
+  th { background: #f5f5f5; }
+  .done { color: #2e7d32; } .todo { color: #e65100; } .skip { color: #999; }
+  code { background: #f0f0f0; padding: 2px 6px; border-radius: 3px; font-size: 0.9em; }
+  .note { background: #fff3e0; padding: 0.75rem 1rem; border-radius: 6px; margin: 0.5rem 0; border-left: 4px solid #e65100; }
+  .section { background: #fff; border-radius: 8px; padding: 1rem 1.25rem; margin: 0.75rem 0; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
+</style>
+</head>
+<body>
+<h1>GS → TS Migration Plan</h1>
+<p>Goal: Zero Google Apps Script dependency. All logic in TypeScript.</p>
+
+<h2>Status</h2>
+<table>
+  <tr><th>GS File</th><th>TS Module</th><th>Status</th><th>Notes</th></tr>
+  <tr><td>Debug.gs</td><td><code>debug/</code></td><td class="done">✅ Done</td><td>+ tests</td></tr>
+  <tr><td>Plaid.gs</td><td><code>plaid/</code></td><td class="done">✅ Done</td><td>+ tests</td></tr>
+  <tr><td>SheetOps.gs</td><td><code>sheet-ops/</code></td><td class="done">✅ Done</td><td>+ tests</td></tr>
+  <tr><td>Dashboard.gs</td><td><code>dashboard/</code></td><td class="done">✅ Done</td><td>+ tests</td></tr>
+  <tr><td>Sync.gs</td><td><code>sync/</code></td><td class="done">✅ Done</td><td>+ tests</td></tr>
+  <tr><td>Calendar.gs</td><td><code>calendar/</code></td><td class="done">✅ Done</td><td>+ tests</td></tr>
+  <tr><td>Recurring.gs</td><td><code>recurring/</code></td><td class="done">✅ Done</td><td>+ tests</td></tr>
+  <tr><td>Manual.gs</td><td><code>manual/</code></td><td class="done">✅ Done</td><td>+ tests</td></tr>
+  <tr><td>Savings.gs</td><td><code>savings/</code></td><td class="todo">⬜ TODO</td><td>Step 1</td></tr>
+  <tr><td>Snapshot.gs</td><td><code>snapshot/</code></td><td class="todo">⬜ TODO</td><td>Step 2</td></tr>
+  <tr><td>Webhook.gs</td><td><code>webhook/</code></td><td class="todo">⬜ TODO</td><td>Step 3</td></tr>
+  <tr><td>Link.gs</td><td><code>plaid/</code> (partial)</td><td class="done">✅ Done</td><td>Token exchange + link token creation already in plaid/index.ts. Interactive UI parts (Spreadsheet prompts) are GAS-only, not needed in TS.</td></tr>
+  <tr><td>Setup.gs</td><td>—</td><td class="skip">⏭ Skip</td><td>TS uses env vars via config/</td></tr>
+  <tr><td>Tests.gs</td><td>Jest</td><td class="done">✅ Done</td><td>104 tests passing</td></tr>
+</table>
+
+<h2>Step 1: Savings</h2>
+<div class="section">
+  <p><strong>File:</strong> <code>src/savings/index.ts</code> + <code>savings.test.ts</code></p>
+  <p><strong>Source:</strong> Savings.gs (297 lines)</p>
+  <p><strong>What it does:</strong> Isolated savings tracker. Fetches bank transactions + investment transactions from Plaid, categorizes them (transfers, retirement contributions, Ally outflows), and writes monthly summaries to a <code>savings_tracker</code> tab.</p>
+  
+  <p><strong>Implementation:</strong></p>
+  <ol>
+    <li>Add <code>transactionsGet()</code> to <code>plaid/index.ts</code> — wraps <code>/transactions/get</code> endpoint with pagination (Savings uses date-range queries, not sync cursors)</li>
+    <li>Create <code>savings/index.ts</code> with these functions:</li>
+  </ol>
+  <table>
+    <tr><th>Function</th><th>Replaces</th><th>GAS dep removed</th></tr>
+    <tr><td><code>backfill(startDate, endDate?)</code></td><td>SAVINGS.backfill</td><td>Utilities.formatDate → toLocaleDateString</td></tr>
+    <tr><td><code>fetchAllTransactions()</code></td><td>SAVINGS.fetchAllTransactions</td><td>PLAID._post → PLAID.post</td></tr>
+    <tr><td><code>fetchAllInvestmentTransactions()</code></td><td>SAVINGS.fetchAllInvestmentTransactions</td><td>PLAID._post → PLAID.post</td></tr>
+    <tr><td><code>readExisting()</code></td><td>SAVINGS.readExisting</td><td>sheet.getDataRange → sheetApi.getValues</td></tr>
+    <tr><td><code>buildMonthMap()</code></td><td>SAVINGS.buildMonthMap</td><td>pure logic, no GAS</td></tr>
+    <tr><td><code>getCategory()</code></td><td>SAVINGS.getCategory</td><td>pure logic, no GAS</td></tr>
+    <tr><td><code>isExcluded()</code></td><td>SAVINGS.isExcluded</td><td>pure logic, no GAS</td></tr>
+    <tr><td><code>writeSheet()</code></td><td>SAVINGS.writeSheet</td><td>sheet.getRange.setValue → sheetApi.setValues</td></tr>
+    <tr><td><code>ensureTab()</code></td><td>SAVINGS.ensureTab</td><td>SpreadsheetApp → sheetApi.ensureTab</td></tr>
+  </table>
+  <p><strong>Config deps:</strong> <code>ACCESS_TOKEN_ally</code>, <code>ACCESS_TOKEN_bofa</code>, <code>ACCESS_TOKEN_fidelity</code> (already stored by Link flow)</p>
+  <p><strong>Note:</strong> <code>dashboard/index.ts:239</code> already has <code>await import('../savings')</code> — will fail until this is done.</p>
+</div>
+
+<h2>Step 2: Snapshot</h2>
+<div class="section">
+  <p><strong>File:</strong> <code>src/snapshot/index.ts</code> + <code>snapshot.test.ts</code></p>
+  <p><strong>Source:</strong> Snapshot.gs (82 lines)</p>
+  <p><strong>What it does:</strong> Month-end snapshots. Copies data tabs (transactions, interview_income, adjustments, dashboard) with a month suffix (e.g. <code>transactions_2026-07</code>).</p>
+  
+  <p><strong>Implementation:</strong></p>
+  <table>
+    <tr><th>Function</th><th>Replaces</th><th>GAS dep removed</th></tr>
+    <tr><td><code>snapshotMonth(month)</code></td><td>SNAPSHOT.snapshotMonth</td><td>ss.getSheetByName → sheetApi. ss.copyTo → sheets API copyTo</td></tr>
+    <tr><td><code>snapshotCurrentMonth()</code></td><td>SNAPSHOT.snapshotCurrentMonth</td><td>dash.getRange("B4").getValue → sheetApi.getCell</td></tr>
+    <tr><td><code>autoSnapshotOnRollover(prev)</code></td><td>SNAPSHOT.autoSnapshotOnRollover</td><td>same as snapshotMonth</td></tr>
+  </table>
+  <p><strong>Sheets API needed:</strong> <code>sheets.spreadsheets.sheets.copyTo()</code> to copy a sheet within the same spreadsheet. Then rename the copy.</p>
+  <p><strong>Also need:</strong> <code>sheets.spreadsheets.sheets.delete()</code> to overwrite existing snapshots.</p>
+  <p><strong>Add to sheet-api:</strong> <code>copySheet(sourceSheetId, destSheetId?)</code>, <code>deleteSheet(sheetId)</code>, <code>renameSheet(sheetId, name)</code></p>
+</div>
+
+<h2>Step 3: Webhook</h2>
+<div class="section">
+  <p><strong>File:</strong> <code>src/webhook/index.ts</code> + <code>webhook.test.ts</code></p>
+  <p><strong>Source:</strong> Webhook.gs (213 lines)</p>
+  <p><strong>What it does:</strong> Receives Plaid webhooks via HTTP, triggers incremental sync + balance refresh.</p>
+  
+  <p><strong>Implementation:</strong></p>
+  <table>
+    <tr><th>Function</th><th>Replaces</th><th>GAS dep removed</th></tr>
+    <tr><td><code>POST /webhook</code></td><td>doPost</td><td>ContentService → Express res.json()</td></tr>
+    <tr><td><code>GET /webhook</code></td><td>doGet</td><td>ContentService → Express res.json()</td></tr>
+    <tr><td><code>findItemNameByItemId()</code></td><td>findItemNameByItemId</td><td>PropertiesService → config</td></tr>
+    <tr><td><code>refreshAllBalances()</code></td><td>refreshAllBalances</td><td>PropertiesService → config</td></tr>
+    <tr><td><code>configureWebhook(url)</code></td><td>configureWebhook</td><td>PropertiesService → config</td></tr>
+  </table>
+  <p><strong>New dependencies:</strong> <code>express</code> (already in package.json)</p>
+  <p><strong>Security:</strong> Add Plaid webhook verification using <code>Plaid-Verification</code> header. Plaid publishes verification keys at <code>https://cdn.plaid.com/verification/public-key.json</code>. Verify HMAC-SHA256 of the request body.</p>
+  <p><strong>Entry point:</strong> <code>startWebhookServer(port?)</code> — starts Express on configurable port (default 3001)</p>
+</div>
+
+<h2>Execution order</h2>
+<div class="note">
+  <p>Steps are sequential — each builds on the previous:</p>
+  <ol>
+    <li><strong>Step 1 (Savings)</strong> — add transactionsGet to plaid, create savings module + tests</li>
+    <li><strong>Step 2 (Snapshot)</strong> — add sheet copy/delete/rename to sheet-api, create snapshot module + tests</li>
+    <li><strong>Step 3 (Webhook)</strong> — create Express webhook handler + tests</li>
+  </ol>
+  <p><strong>Estimated:</strong> ~30 min per step. All three in one session.</p>
+</div>
+
+<h2>What we're NOT migrating</h2>
+<ul>
+  <li><strong>Link.gs interactive parts</strong> — SpreadsheetApp.getUi() prompts. In TS, user sets tokens via env vars or a simple CLI script. The token exchange logic is already in <code>plaid/index.ts</code>.</li>
+  <li><strong>Setup.gs</strong> — One-time credential entry via UI prompts. TS uses <code>.env</code> file.</li>
+  <li><strong>Toast messages</strong> — GAS-only UI notification. In TS, just log.</li>
+  <li><strong>Time-driven triggers</strong> — Already replaced by webhooks.</li>
+</ul>
+
+</body>
+</html>

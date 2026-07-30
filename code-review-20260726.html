@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Code Review: Finance Tracker</title>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; max-width: 900px; margin: 40px auto; padding: 0 20px; line-height: 1.6; color: #222; }
+  h1 { color: #1a1a1a; border-bottom: 2px solid #4CAF50; padding-bottom: 8px; }
+  h2 { color: #333; margin-top: 32px; }
+  h3 { color: #444; }
+  table { border-collapse: collapse; width: 100%; margin: 16px 0; font-size: 14px; }
+  th, td { border: 1px solid #ddd; padding: 10px; text-align: left; }
+  th { background: #f5f5f5; font-weight: 600; }
+  tr:nth-child(even) { background: #fafafa; }
+  code { background: #f4f4f4; padding: 2px 6px; border-radius: 4px; font-family: "SF Mono", Monaco, monospace; font-size: 13px; }
+  pre { background: #f8f8f8; padding: 12px; border-radius: 6px; overflow-x: auto; }
+  blockquote { border-left: 4px solid #4CAF50; margin: 0; padding-left: 16px; color: #555; }
+  hr { border: none; border-top: 1px solid #eee; margin: 32px 0; }
+</style>
+</head>
+<body>
+<h1>Code Review: Personal Finance Tracker</h1>
+<p><strong>Reviewer:</strong> Cline<br />
+<strong>Date:</strong> 2026-07-26<br />
+<strong>Scope:</strong> Full <code>appsscript/</code> codebase (~3,000 lines across 14 source files)<br />
+<strong>Context:</strong> Google Apps Script + Plaid + Google Sheets + Calendar integration</p>
+<hr />
+<h2>Executive Summary</h2>
+<p>You shipped a real, working personal-finance dashboard that syncs 4 production bank accounts via Plaid, parses interview income from Google Calendar, tracks recurring bills, monitors savings/401k contributions, and auto-refreshes via webhooks. That alone puts this in the top 10% of side projects. The code is modular, documented, and largely defensive.</p>
+<p><strong>Grade: B+ / A-</strong> — Solid production-grade personal tooling with clear senior-level instincts, held back mainly by performance shortcuts that will bite you at scale and a few maintainability gaps.</p>
+<hr />
+<h2>What You Did Really Well</h2>
+<h3>1. Documentation &amp; Process Discipline</h3>
+<ul>
+<li><code>PLAN.md</code> with milestone tracking (I1–I9), runbooks, and root-cause analysis (I8 resolution)</li>
+<li><code>AGENTS.md</code> with architecture invariants, dev workflow, and key learnings</li>
+<li><code>.clinerules</code> enforcing test-first, syntax validation, and git+clasp discipline</li>
+<li>This is better documentation hygiene than most startups.</li>
+</ul>
+<h3>2. Architecture Decisions</h3>
+<ul>
+<li><strong>Header-name-based column resolution</strong> (<code>SheetOps.gs</code>, <code>Recurring.gs</code>, <code>Dashboard.gs</code>) — future-proof against column reordering.</li>
+<li><strong>Proper Plaid sync semantics</strong> — uses <code>/transactions/sync</code> with cursors, handles <code>added/modified/removed</code> correctly.</li>
+<li><strong>Webhook-driven incremental sync</strong> — not naive polling. <code>doPost</code> → <code>syncTransactions</code> → <code>writeTransactions</code>.</li>
+<li><strong>Savings tracker isolation</strong> — completely separate workflow from main sync, uses <code>/transactions/get</code> for arbitrary date ranges without polluting sync cursors.</li>
+<li><strong>Account name caching</strong> (<code>ACCT_*</code> in <code>ScriptProperties</code>) avoids redundant <code>/accounts/get</code> calls.</li>
+</ul>
+<h3>3. Defensive Coding</h3>
+<ul>
+<li>Centralized <code>Debug.log/error/logRaw</code> system with hidden tab logging.</li>
+<li><code>try/catch</code> around almost every external call (Plaid API, Calendar API, Sheets UI).</li>
+<li><code>resetAndResync()</code> with user confirmation dialog and clear semantics.</li>
+<li>Migration path in <code>writeTransactions</code> for old tab layouts.</li>
+</ul>
+<h3>4. User Experience</h3>
+<ul>
+<li>Toast notifications on completion.</li>
+<li>Checkbox-driven &quot;Refresh All&quot; trigger.</li>
+<li><code>onEdit</code> auto-refresh for dashboard inputs.</li>
+<li>Monthly snapshot backups before rollover.</li>
+</ul>
+<hr />
+<h2>What Could Be Better</h2>
+<h3>1. Performance &amp; Scale (Will Hurt Soon)</h3>
+<table>
+<thead>
+<tr>
+  <th>Issue</th>
+  <th>Location</th>
+  <th>Why It Matters</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td><strong>Full-sheet rewrite on every sync</strong></td>
+  <td><code>SheetOps.writeTransactions</code></td>
+  <td>Clears and rewrites <em>all</em> transactions on every webhook delta. With 4 banks × 12 months, this is O(n) where n = total history. Apps Script has a 6-minute execution limit.</td>
+</tr>
+<tr>
+  <td><strong>In-memory spend calculation</strong></td>
+  <td><code>Dashboard.calculateSpend</code></td>
+  <td>Reads entire transaction tab into JS, loops row-by-row. Sheets has built-in <code>SUMIF</code>/<code>QUERY</code> that run in native code.</td>
+</tr>
+<tr>
+  <td><strong>Redundant account name lookups</strong></td>
+  <td><code>Plaid.getAccountNames</code></td>
+  <td>For every missing account_id, iterates <em>all</em> <code>ACCESS_TOKEN_*</code> keys and calls <code>/accounts/get</code>. Should map <code>account_id → item_name</code> directly.</td>
+</tr>
+<tr>
+  <td><strong>Savings backfill pagination</strong></td>
+  <td><code>Savings.fetchAllTransactions</code></td>
+  <td>Fetches 500 tx/page for 3 banks across arbitrary date ranges. Could hit execution timeouts for long windows.</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Recommendation:</strong></p>
+<ul>
+<li>For <code>writeTransactions</code>: switch to incremental updates. Append new rows, overwrite modified rows by finding their row index, and delete removed rows by index. Only fall back to full rebuild when schema changes.</li>
+<li>For <code>calculateSpend</code>: replace JS loop with a <code>QUERY</code> or <code>SUMIFS</code> formula that lives in the dashboard and reads the transactions tab. This also makes the sheet self-documenting.</li>
+</ul>
+<h3>2. Concurrency &amp; Atomicity (Silent Data Loss Risk)</h3>
+<ul>
+<li><strong>No mutex/lock.</strong> A Plaid webhook, a manual &quot;Refresh All&quot; click, and a time-driven trigger can all run simultaneously. Apps Script does not serialize executions by default.</li>
+<li><strong><code>writeTransactions</code> is non-atomic.</strong> <code>sheet.clearContents()</code> followed by <code>sheet.getRange(...).setValues(...)</code>. If the script times out or a concurrent execution runs between these two calls, you lose all transaction data.</li>
+<li><strong><code>refreshAll()</code> step isolation.</strong> If step 1 (sync) fails, steps 2–4 still run against stale data. The error is logged but the user sees a success toast.</li>
+</ul>
+<p><strong>Recommendation:</strong></p>
+<ul>
+<li>Use <code>ScriptProperties</code> (or a &quot;lock&quot; cell in a hidden sheet) as a poor-man's mutex. Check at entry, bail if locked.</li>
+<li>Make <code>writeTransactions</code> atomic: write to a staging tab, then rename/replace, or use row-index-based edits instead of clear+rewrite.</li>
+</ul>
+<h3>3. Hardcoded Configuration (Tech Debt)</h3>
+<table>
+<thead>
+<tr>
+  <th>Value</th>
+  <th>Location</th>
+  <th>Should Be</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td><code>$9,000</code> base salary</td>
+  <td><code>Dashboard.calculateNetIncome</code></td>
+  <td>Dashboard cell or <code>ScriptProperties</code></td>
+</tr>
+<tr>
+  <td><code>$85 / $115 / $75</code> interview rates</td>
+  <td>Comments + <code>Dashboard.init</code></td>
+  <td>Configurable in dashboard</td>
+</tr>
+<tr>
+  <td><code>$4,000</code> default target</td>
+  <td><code>Dashboard.init</code></td>
+  <td>Dashboard input (already is, but hardcoded fallback)</td>
+</tr>
+<tr>
+  <td><code>0.7</code> tax scalar</td>
+  <td><code>Dashboard.init</code></td>
+  <td>Dashboard input (already is — good!)</td>
+</tr>
+<tr>
+  <td><code>30</code> / <code>90</code> day scan windows</td>
+  <td><code>Calendar.parseCalendarEvents</code></td>
+  <td>Dashboard setting or parameter</td>
+</tr>
+<tr>
+  <td><code>4</code> weeks per month (Headway)</td>
+  <td><code>Recurring.calculateUpcoming</code></td>
+  <td>Could be configurable per-bill</td>
+</tr>
+<tr>
+  <td>Historical manual adjustments</td>
+  <td><code>Savings.populateManualAdjustments</code></td>
+  <td>A &quot;manual_adjustments_config&quot; tab or JSON in ScriptProperties</td>
+</tr>
+<tr>
+  <td>Webhook URL</td>
+  <td><code>Webhook.gs</code>, <code>Link.gs</code>, <code>Plaid.gs</code>, <code>Setup.gs</code></td>
+  <td>Single constant or ScriptProperties default</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Recommendation:</strong> Extract all magic numbers to a <code>CONFIG</code> object at the top of <code>Dashboard.gs</code> (or a dedicated config tab) so you don't need to edit code to change your salary or interview rates.</p>
+<h3>4. Security &amp; Secrets</h3>
+<ul>
+<li><strong>Google API key committed in <code>AGENTS.md</code>.</strong> Even if read-only, rotating it requires a git rewrite. It should be in <code>.env</code> or <code>ScriptProperties</code> and referenced in docs via placeholder.</li>
+<li><strong>Webhook URL hardcoded in 4 files.</strong> If you ever redeploy the web app, you must edit source code. Should be <code>ScriptProperties.getProperty(&quot;WEBHOOK_URL&quot;)</code> everywhere.</li>
+<li><strong><code>ScriptProperties</code> stores Plaid secrets in plaintext.</strong> This is an Apps Script limitation, but worth documenting as a known risk. (Google does encrypt at rest, but it's accessible to anyone with editor access to the script.)</li>
+</ul>
+<h3>5. Code Consistency</h3>
+<ul>
+<li><strong>Mixed <code>var</code> / <code>const</code> / <code>let</code>.</strong> Most files use <code>var</code> exclusively (older style), but newer files mix in <code>const</code>. Apps Script V8 supports <code>const</code>/<code>let</code> — standardizing on <code>const</code> for bindings that don't change would make the code more self-documenting.</li>
+<li><strong><code>Object.prototype.toString.call(arr) === &quot;[object Array]&quot;</code></strong> in <code>SheetOps.writeTransactions</code> — use <code>Array.isArray()</code>.</li>
+<li><strong><code>indexOf(...) &gt;= 0</code></strong> everywhere — <code>includes()</code> is more readable and available in V8.</li>
+<li><strong><code>eval(key)</code></strong> in <code>Tests.gs</code> — unnecessary. You can reference globals via <code>this[key]</code> or <code>globalThis[key]</code> in V8.</li>
+</ul>
+<h3>6. Edge Cases &amp; Bugs</h3>
+<ul>
+<li><strong>Checkbox boolean vs string.</strong> <code>onEdit</code> checks <code>e.value === &quot;TRUE&quot;</code>, but Sheets checkbox events can emit the boolean <code>true</code> (not a string). Use <code>e.value === true || e.value === &quot;TRUE&quot;</code>.</li>
+<li><strong><code>calculateSpend</code> NaN risk.</strong> <code>Number(txAmount)</code> without <code>isNaN()</code> check. A malformed sheet cell could poison the sum.</li>
+<li><strong>Month rollover race.</strong> <code>maybeResetManualInputs</code> runs inside <code>Dashboard.refresh</code>. If you open the sheet at 11:59 PM and refresh at 12:01 AM, the reset might not fire until the <em>next</em> refresh. Consider a time-driven trigger for rollover instead of relying on user-driven refreshes.</li>
+<li><strong>Investment transaction date parsing.</strong> <code>inv.date</code> might be a Date object from the API, not a string. The code does <code>invDate.substring(0, 7)</code> which would fail on a Date object. (Plaid returns ISO strings, so this is fine today, but fragile.)</li>
+</ul>
+<h3>7. Testing</h3>
+<ul>
+<li>Tests are primarily <strong>smoke tests</strong> (&quot;does this function exist? does it return a number?&quot;). They don't validate business logic.</li>
+<li>No test for the <strong>core sync merge algorithm</strong> (added + modified + removed + dedup).</li>
+<li>No mocked Plaid API — tests only work inside the Apps Script environment.</li>
+<li><code>testModulesLoaded</code> uses <code>eval()</code> which is a red flag.</li>
+</ul>
+<p><strong>Recommendation:</strong></p>
+<ul>
+<li>Add a pure-JS test for <code>writeTransactions</code> merge logic that can run in Node (extract the merge logic from sheet I/O).</li>
+<li>Consider property-based testing for the sync algorithm: generate random added/modified/removed sets and verify invariants.</li>
+</ul>
+<hr />
+<h2>Specific File Notes</h2>
+<table>
+<thead>
+<tr>
+  <th>File</th>
+  <th>Verdict</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td><code>Debug.gs</code></td>
+  <td>Excellent. Simple, effective, safe.</td>
+</tr>
+<tr>
+  <td><code>Plaid.gs</code></td>
+  <td>Good abstraction. <code>_post</code> is clean. <code>getAccountNames</code> lookup is inefficient.</td>
+</tr>
+<tr>
+  <td><code>SheetOps.gs</code></td>
+  <td>Solid migration logic. Full rewrite is the main concern.</td>
+</tr>
+<tr>
+  <td><code>Dashboard.gs</code></td>
+  <td>Feature-rich but doing too much work in JS that Sheets formulas could handle. <code>onEdit</code> debounce is clever but relies on ScriptProperties eventual consistency.</td>
+</tr>
+<tr>
+  <td><code>Webhook.gs</code></td>
+  <td>Clean. Hardcoded URL is the issue.</td>
+</tr>
+<tr>
+  <td><code>Link.gs</code></td>
+  <td>Good UX flow (Hosted Link → exchange → prompt for name). Institution auto-detect is a nice touch.</td>
+</tr>
+<tr>
+  <td><code>Sync.gs</code></td>
+  <td>Straightforward. <code>resetAndResync</code> is well-guarded.</td>
+</tr>
+<tr>
+  <td><code>Calendar.gs</code></td>
+  <td>Simple and effective. Keyword matching is inherently fragile but acceptable for personal use.</td>
+</tr>
+<tr>
+  <td><code>Recurring.gs</code></td>
+  <td>Clean header-based parsing. Weekly &quot;4 per month&quot; assumption is slightly naive (some months have 5 weeks).</td>
+</tr>
+<tr>
+  <td><code>Savings.gs</code></td>
+  <td>Good isolation. <code>populateManualAdjustments</code> should not have hardcoded data.</td>
+</tr>
+<tr>
+  <td><code>Snapshot.gs</code></td>
+  <td>Simple, does one thing well.</td>
+</tr>
+<tr>
+  <td><code>Tests.gs</code></td>
+  <td>Good start, but shallow.</td>
+</tr>
+<tr>
+  <td><code>Setup.gs</code></td>
+  <td>Clean one-time setup.</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2>Bottom Line</h2>
+<p><strong>You should be proud of this.</strong> It's not a toy — it's a real financial system with proper API integration, event-driven architecture, user-friendly runbooks, and genuine attention to data integrity (sync cursors, column-name resolution, snapshot backups). The gaps I flagged are mostly &quot;senior engineer polishing&quot; issues: concurrency, scale, and configurability. The foundation is solid.</p>
+<p><strong>If I were interviewing you and this was your portfolio project, I'd be impressed.</strong> It demonstrates systems thinking, API design, error handling, and user empathy. I'd follow up by asking how you'd handle the concurrency and scale issues, and I'd expect you to have good answers because you've already solved the hard parts.</p>
+<p><strong>Top 3 things to fix if you have an afternoon:</strong></p>
+<ol>
+<li>Make <code>writeTransactions</code> incremental (atomic append/overwrite/delete by row index).</li>
+<li>Extract all magic numbers to a <code>CONFIG</code> object or config sheet.</li>
+<li>Add a execution lock to prevent concurrent syncs.</li>
+</ol>
+
+</body>
+</html>

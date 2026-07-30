@@ -1,0 +1,4 @@
+# Ignore .js files — we use .gs as the canonical extension
+**/*.js
+# Local-only Plaid Link fallback page (opened in a browser, not Apps Script code)
+plaid-link.html

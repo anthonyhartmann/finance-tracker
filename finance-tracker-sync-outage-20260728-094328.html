@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>Finance Tracker Outage — 2026-07-28</title>
+<style>
+ body { font-family: -apple-system, sans-serif; max-width: 860px; margin: 40px auto; padding: 0 20px; line-height: 1.55; color: #1a1a1a; }
+ h1 { border-bottom: 3px solid #d32f2f; padding-bottom: 8px; }
+ h2 { color: #b71c1c; margin-top: 32px; }
+ table { border-collapse: collapse; width: 100%; font-size: 14px; }
+ th, td { border: 1px solid #ccc; padding: 6px 10px; text-align: left; vertical-align: top; }
+ th { background: #f5f5f5; }
+ code { background: #f0f0f0; padding: 1px 5px; border-radius: 3px; font-size: 13px; }
+ ol li, ul li { margin: 6px 0; }
+</style></head><body><h1>Finance Tracker Sync Outage — Diagnosis &amp; Fix (2026-07-28)</h1>
+<h2>TL;DR</h2>
+<p>No sync since <strong>2026-07-26 16:07</strong>. Two compounding problems:</p>
+<ol>
+<li><strong><code>scheduledRefresh</code> crashed on every run</strong> — <code>ReferenceError: date is not defined</code> in <code>savings.backfill</code>
+(deployed bundle line 1033), introduced by the month-normalization fix <code>0eae764</code>.</li>
+<li><strong>The twice-daily time triggers are gone</strong> — no 8:00/20:00 runs at all since 07-26 evening
+(they must be recreated; one click, see below).</li>
+</ol>
+<p>Both are now fixed in code and deployed (<code>ea949d9</code>, pushed via clasp at 09:35). The fix is verified
+live: a <code>clasp pull</code> of production is byte-identical to the fixed bundle.</p>
+<h2>Timeline (from the sheet's debug tab)</h2>
+<table>
+<thead>
+<tr>
+  <th>When</th>
+  <th>What</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td>07-26 13:01–14:05</td>
+  <td>Dashboard/savings bug-fix commits land; scheduledRefresh runs fine</td>
+</tr>
+<tr>
+  <td>07-26 16:02</td>
+  <td><code>0eae764</code> commits month-key normalization. bundle.gs hand-patched (3 lines)</td>
+</tr>
+<tr>
+  <td>07-26 ~16:05</td>
+  <td>An <strong>uncommitted full rebuild</strong> of bundle.gs — containing a <code>ReferenceError</code> — is what actually got pushed to Google</td>
+</tr>
+<tr>
+  <td>07-26 16:06–16:07</td>
+  <td>scheduledRefresh: sync succeeds (5 accounts), then <strong>crash</strong>: <code>date is not defined</code> at <code>backfill (bundle:1033:37)</code></td>
+</tr>
+<tr>
+  <td>07-26 16:10</td>
+  <td>Manual <code>syncAllProductionAccounts</code> works fine (the bug only lives in the savings backfill step)</td>
+</tr>
+<tr>
+  <td>07-26 20:00 → 07-28 09:00</td>
+  <td><strong>Zero scheduled runs.</strong> onEdit still fires (07-26 18:24, 07-28 09:08), proving the script itself loads</td>
+</tr>
+</tbody>
+</table>
+<h2>Root cause chain (how a typo took down sync for 2 days)</h2>
+<ol>
+<li><code>0eae764</code> renamed loop variable <code>date</code> → <code>dateStr</code> in <code>savings.backfill</code> but <strong>missed two
+<code>details.push(date + ...)</code> calls</strong> — lines that only execute for qualifying transfer/Ally transactions.</li>
+<li>The commit's bundle.gs was <strong>hand-patched</strong> (3-line diff) while source changed 53 lines → git no longer
+represented production. The real rebuild stayed <strong>uncommitted</strong> in the working tree.</li>
+<li><strong>esbuild doesn't type-check</strong> and jest runs ts-jest with <code>diagnostics: false</code> → &quot;all 142 tests pass&quot;
+despite <code>tsc</code> reporting <code>Cannot find name 'date'</code>.</li>
+<li>Existing backfill tests mocked <strong>zero qualifying transactions</strong>, so the broken lines never executed in tests.</li>
+<li><code>verify-gas-bundle.js</code> only checks <code>process.env</code> / bare <code>fetch(</code> / syntax — it cannot catch undefined variables.</li>
+<li>No trigger watchdog: when the time triggers disappeared (most likely deleted during 07-26 incident
+response — onEdit proves the project itself was healthy), nothing noticed or recreated them.</li>
+</ol>
+<h2>What I changed (commit <code>ea949d9</code>, deployed)</h2>
+<ul>
+<li><strong>Fix</strong>: <code>date</code> → <code>dateStr</code> in both <code>details.push</code> calls. A new regression test reproduces the exact
+production <code>ReferenceError</code> before the fix and passes after. <strong>150/150 tests green, <code>tsc --noEmit</code> clean.</strong></li>
+<li><strong>Gate</strong>: <code>tsc --noEmit</code> now runs before <code>npm test</code>, <code>build:gas</code>, <code>verify:gas</code> — this class of bug can no
+longer compile or deploy silently. Also fixed 6 latent <code>instanceof</code> type errors so the gate stays clean.</li>
+<li><strong>Resilience</strong>: <code>scheduledRefresh</code> now isolates <code>savings.backfill</code> failures — a backfill crash can no
+longer skip the dashboard refresh or fail the whole job.</li>
+<li><strong>Trigger self-healing</strong>: <code>ensureTriggers</code> is now idempotent (recreates exactly the 8:00 + 20:00 triggers)
+and, with a new <code>listTriggers</code> diagnostic, is exposed as a top-level GAS function so it can actually be
+run from the editor (previously it existed only on <code>globalThis</code> — invisible to the Run menu!).</li>
+<li><strong>Pipeline</strong>: new <code>npm run deploy:gas</code> = typecheck → build → bundle-verify → clasp push.</li>
+<li><strong>Docs</strong>: <code>ts-app/AGENTS.md</code> — architecture, deploy rules, debugging playbook, gotchas, this postmortem.</li>
+</ul>
+<h2>⚠️ One thing left — needs you (30 seconds)</h2>
+<p>The scheduled triggers can only be recreated from inside Google (no API exposes them; <code>clasp run</code> is
+unavailable for this project). Open the Apps Script editor:</p>
+<ol>
+<li>Go to <strong>script.google.com</strong> → the finance tracker project (or spreadsheet → Extensions → Apps Script)</li>
+<li>Select <strong><code>ensureTriggers</code></strong> in the function dropdown → <strong>Run</strong> → authorize if asked</li>
+<li>Select <strong><code>listTriggers</code></strong> → <strong>Run</strong> → confirm it logs <code>scheduledRefresh</code> × 2</li>
+<li>Optional: run <strong><code>scheduledRefresh</code></strong> once manually to sync immediately instead of waiting for 20:00</li>
+</ol>
+<p>I'll verify the 20:00 run lands in the debug tab tonight (<code>python3 ~/.cline/data/read_sheet_debug_log.py</code>).</p>
+<h2>Preventing the next one</h2>
+<p>Done: tsc gate in the pipeline · regression test executing the previously-uncovered lines · backfill
+failure isolation · self-healing triggers · deploy script that can't skip verification · AGENTS.md.</p>
+<p>Recommended next steps (not done — say the word):</p>
+<ul>
+<li><strong>Staleness heartbeat</strong>: write &quot;last successful sync&quot; to a visible dashboard cell so a silent outage
+is obvious in the sheet you actually look at.</li>
+<li><strong>Re-run <code>configureWebhook</code></strong> in the editor: no Plaid webhook (<code>doPost</code>) hits in the debug tab since
+07-26 either, so webhook-driven syncs may also be stale.</li>
+<li>Fill out <code>ts-app/.env</code> so the local Node runner works as an out-of-band backup sync path.</li>
+</ul>
+</body></html>

@@ -1,0 +1,746 @@
+<!DOCTYPE html>
+<html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'>
+<title>dashboard techspec</title>
+<style>
+body { font-family: -apple-system, system-ui, sans-serif; max-width: 900px; margin: 2rem auto; padding: 0 1.5rem; color: #1a1a1a; line-height: 1.6; font-size: 15px; }
+h1 { font-size: 1.6rem; border-bottom: 2px solid #e5e7eb; padding-bottom: 0.5rem; }
+h2 { font-size: 1.3rem; margin-top: 2rem; color: #374151; }
+h3 { font-size: 1.1rem; color: #4b5563; }
+table { border-collapse: collapse; width: 100%; margin: 1rem 0; }
+th, td { border: 1px solid #d1d5db; padding: 8px 12px; text-align: left; font-size: 0.9rem; }
+th { background: #f9fafb; font-weight: 600; }
+code { background: #f3f4f6; padding: 2px 6px; border-radius: 4px; font-size: 0.85em; }
+pre { background: #1e293b; color: #e2e8f0; padding: 1rem; border-radius: 8px; overflow-x: auto; font-size: 0.85rem; line-height: 1.5; }
+pre code { background: none; padding: 0; color: inherit; }
+blockquote { border-left: 4px solid #3b82f6; margin: 1rem 0; padding: 0.5rem 1rem; background: #eff6ff; border-radius: 0 8px 8px 0; }
+hr { border: none; border-top: 1px solid #e5e7eb; margin: 2rem 0; }
+strong { color: #111827; }
+ul, ol { padding-left: 1.5rem; }
+li { margin-bottom: 0.3rem; }
+</style></head><body><h1>Cline Agent Dashboard — Technical Specification</h1>
+<blockquote>
+<p><strong>Document:</strong> Technical Specification
+<strong>Date:</strong> 2026-07-26
+<strong>Version:</strong> v1.0
+<strong>Companion:</strong> See <code>dashboard-prd-20260726.md</code> for product requirements
+<strong>Status:</strong> Draft</p>
+</blockquote>
+<hr />
+<h2>1. Architecture</h2>
+<p>Single Node.js process with an HTTP server. Connects to the Cline hub daemon's WebSocket protocol using the official <code>@cline/core</code> <code>HubUIClient</code> (for session list + UI events) and <code>HubSessionClient</code> (for chat messaging). Serves a static HTML page styled with Pico CSS and Alpine.js.</p>
+<pre><code>┌─────────────────────────────────────────────────────────────┐
+│                    Browser (tab)                             │
+│  Pico CSS + Alpine.js                                       │
+│    ├── Session list table  ← GET /api/sessions + SSE        │
+│    └── Chat panel          ← GET /api/messages/:id + SSE    │
+│          ├── message history (read from .messages.json)      │
+│          ├── input box     → POST /api/send/:id             │
+│          └── real-time stream (SSE push)                    │
+└────────────────────────────────────────┬────────────────────┘
+                                         │ HTTP
+┌────────────────────────────────────────▼────────────────────┐
+│              dashboard.js  (Node 22, stdlib only)            │
+│                                                              │
+│  HubUIClient ──WebSocket──▶ hub-daemon (:25463)              │
+│    ├─ listSessions()        (session list + metadata)        │
+│    ├─ subscribeUI()  ──▶  SSE broadcast to browsers          │
+│    └─ listClients()                                          │
+│                                                              │
+│  HubSessionClient ──WebSocket──▶ hub-daemon (:25463)         │
+│    ├─ readMessages(sessionId)   (conversation history)       │
+│    ├─ sendRuntimeSession()      (send user message)          │
+│    └─ streamEvents()            (real-time responses)        │
+│                                                              │
+│  fs.watch() on ~/.cline/data/sessions/*/*.messages.json      │
+│    (fallback for message streaming)                          │
+│                                                              │
+│  HTTP Server (node:http)                                     │
+│    ├─ GET /                  → 200 index.html                │
+│    ├─ GET /api/sessions      → 200 [{session}, …]            │
+│    ├─ GET /api/events        → 200 SSE stream                │
+│    ├─ GET /api/messages/:id  → 200 { messages: [...] }      │
+│    ├─ POST /api/send/:id     → 200 (send message)            │
+│    └─ POST /api/open/:id     → 200 (opens terminal)          │
+└─────────────────────────────────────────────────────────────┘
+</code></pre>
+<p>No npm dependencies for the server. No build step for the frontend. Uses:</p>
+<ul>
+<li>Node.js stdlib (<code>http</code>, <code>fs</code>, <code>child_process</code>, <code>path</code>, <code>url</code>)</li>
+<li><code>@cline/core</code> (already installed as a dependency of the <code>cline</code> CLI)</li>
+<li><strong>Pico CSS</strong> (CDN) for styling</li>
+<li><strong>Alpine.js</strong> (CDN) for lightweight reactivity</li>
+</ul>
+<hr />
+<h2>2. Data Layer</h2>
+<h3>2.1 Hub Connection</h3>
+<p>The Cline hub daemon exposes a WebSocket at <code>ws://127.0.0.1:25463/hub</code>.
+Authentication is via bearer token stored in a lock file.</p>
+<pre><code class="language-javascript">const fs = require('fs');
+const { HubUIClient } = require(CLINE_CORE_PATH);
+
+const LOCK_PATH = join(HOME, '.cline/data/locks/hub/production.json');
+const lock = JSON.parse(fs.readFileSync(LOCK_PATH, 'utf8'));
+
+const client = new HubUIClient({
+  address:    lock.url,             // ws://127.0.0.1:25463/hub
+  authToken:  lock.authToken,      // 64-char hex
+  clientId:   'dashboard-' + Date.now(),
+  clientType: 'dashboard',
+  displayName: 'Agent Dashboard'
+});
+
+await client.connect();
+</code></pre>
+<p><strong>Path to <code>@cline/core</code>:</strong></p>
+<pre><code class="language-javascript">const CLINE_CORE_PATH = join(
+  process.env.HOME,
+  '.asdf/installs/nodejs/22.22.1/lib/node_modules/cline/node_modules/@cline/core/dist/index.js'
+);
+</code></pre>
+<p><em>Note: This hardcoded path is pinned to the current Cline install. A startup probe walks <code>node_modules/@cline/core/dist/index.js</code> upward from common asdf/global install locations. If not found, dashboard logs an error and exits.</em></p>
+<h3>2.2 Session Record Shape</h3>
+<p>The <code>HubUIClient.listSessions()</code> call returns:</p>
+<pre><code class="language-typescript">{
+  sessionId:      string;       // &quot;1785085544240_dvqpd&quot;
+  workspaceRoot:  string;       // &quot;/Users/anthonyhartmann/.cline&quot;
+  cwd:            string;       // &quot;/Users/anthonyhartmann/.cline&quot;
+  createdAt:      number;       // epoch ms
+  updatedAt:      number;       // epoch ms
+  createdByClientId: string;    // &quot;core-7yirxsj1-ms21ud0a&quot;
+  status:         string;       // &quot;running&quot; | &quot;completed&quot; | &quot;failed&quot; | &quot;idle&quot;
+  participants:   Array&lt;{ clientId, attachedAt, role }&gt;;
+  metadata: {
+    source:       &quot;cli&quot;;
+    provider:     string;       // &quot;cline-pass&quot;
+    model:        string;       // &quot;deepseek/deepseek-v4-flash&quot;
+    mode:         &quot;act&quot; | &quot;plan&quot;;
+    title:        string;       // first ~80 chars of prompt
+    prompt:       string;       // full raw prompt text
+    totalCost:    number;       // USD, e.g. 0.0684
+    pid:          number;       // OS process ID for liveness check
+    usage:        { inputTokens, outputTokens, cacheReadTokens, ... }
+    messagesPath: string;       // path to .messages.json file
+    ...
+  };
+  runtimeOptions: {
+    enableTools:  boolean;
+    enableSpawn:  boolean;
+    enableTeams:  boolean;
+    mode:         string;
+    systemPrompt: string;
+  }
+}
+</code></pre>
+<h3>2.3 Push Updates via subscribeUI()</h3>
+<p>The <code>HubUIClient.subscribeUI()</code> method returns events without polling:</p>
+<pre><code class="language-javascript">const unsubscribe = client.subscribeUI({
+  onSessionCreated:   (payload) =&gt; { /* add to session cache, broadcast SSE */ },
+  onSessionUpdated:   (payload) =&gt; { /* update session cache, broadcast SSE */ },
+  onSessionDetached:  (payload) =&gt; { /* remove/update in cache, broadcast SSE */ },
+  onClientRegistered:  (payload) =&gt; { /* log new client connection */ },
+  onClientDisconnected: (payload) =&gt; { /* log client disconnect */ },
+});
+</code></pre>
+<p>Events are forwarded to connected browsers via <strong>Server-Sent Events</strong> (<code>GET /api/events</code>), which pushes session changes to the frontend without polling.</p>
+<h3>2.4 Server-Sent Events (SSE) for Browser</h3>
+<pre><code class="language-javascript">// Dashboard backend (Node.js)
+app.get('/api/events', (req, res) =&gt; {
+  res.writeHead(200, {
+    'Content-Type':  'text/event-stream',
+    'Cache-Control': 'no-cache',
+    'Connection':    'keep-alive'
+  });
+  const id = Date.now();
+  sseClients.set(id, res);
+  req.on('close', () =&gt; sseClients.delete(id));
+});
+
+// When a hub event arrives:
+sseClients.forEach((res) =&gt; {
+  res.write('data: ' + JSON.stringify(event) + '\n\n');
+});
+</code></pre>
+<h3>2.5 Hub Discovery</h3>
+<pre><code class="language-javascript">// Lock file locations (probed in order)
+const HUB_LOCK_PATHS = [
+  join(HOME, '.cline/data/locks/hub/production.json'),
+  join(HOME, '.cline/data/locks/hub/staging.json'),
+];
+</code></pre>
+<p>If no lock file is found, dashboard exits with a clear error message.</p>
+<h3>2.6 HubSessionClient (Chat)</h3>
+<p>For reading conversation history and sending messages, use <code>HubSessionClient</code>:</p>
+<pre><code class="language-javascript">const { HubSessionClient } = require(CLINE_CORE_PATH);
+
+const chatClient = new HubSessionClient({
+  address:    lock.url,
+  authToken:  lock.authToken,
+  clientId:   'dashboard-chat',
+  clientType: 'dashboard'
+});
+
+await chatClient.connect();
+
+// Read conversation history
+const messages = await chatClient.readMessages(sessionId);
+// messages: LlmsProviders.Message[]
+
+// Stream real-time events
+const stop = chatClient.streamEvents(
+  { sessionIds: [sessionId] },
+  {
+    onEvent: (event) =&gt; {
+      // event: { sessionId, eventType, payload }
+      broadcastToSSE(event);
+    },
+    onError: (err) =&gt; console.error('Stream error:', err)
+  }
+);
+
+// Send a message (verified during implementation)
+// const result = await chatClient.sendRuntimeSession(sessionId, {
+//   text: userMessage
+// });
+</code></pre>
+<p><strong>Note:</strong> <code>sendRuntimeSession()</code> availability and exact request shape will be verified during M1. If the hub does not allow external clients to send messages to an owned session, the dashboard falls back to &quot;Open in Terminal&quot; for message input.</p>
+<h3>2.7 Message File Format</h3>
+<p>When <code>HubSessionClient.readMessages()</code> is unavailable or for direct file access:</p>
+<pre><code class="language-javascript">// Path: ~/.cline/data/sessions/&lt;sessionId&gt;/&lt;sessionId&gt;.messages.json
+const messagesFile = require(`/Users/.../.cline/data/sessions/${id}/${id}.messages.json`);
+
+{
+  version: 1,
+  updated_at: &quot;2026-07-26T17:32:22.451Z&quot;,
+  agent: &quot;lead&quot;,
+  sessionId: &quot;1785085544240_dvqpd&quot;,
+  system_prompt: &quot;...&quot;,
+  messages: [
+    {
+      id: &quot;msg_ms21vc5v_dbc&quot;,
+      role: &quot;user&quot;,        // &quot;user&quot; | &quot;assistant&quot;
+      content: [
+        { type: &quot;text&quot;, text: &quot;...&quot; },
+        { type: &quot;tool_use&quot;, tool_use_id: &quot;...&quot;, name: &quot;run_commands&quot;, input: {...} },
+        { type: &quot;tool_result&quot;, tool_use_id: &quot;...&quot;, name: &quot;run_commands&quot;, content: [...] }
+      ],
+      ts: 1785085557138     // epoch ms
+    }
+  ]
+}
+</code></pre>
+<p><strong>Message rendering rules:</strong></p>
+<ul>
+<li><code>role: &quot;user&quot;</code> → right-aligned, blue bubble</li>
+<li><code>role: &quot;assistant&quot;</code> → left-aligned, gray bubble</li>
+<li><code>content[].type === &quot;tool_use&quot;</code> → collapsible tool call card (show tool name + input)</li>
+<li><code>content[].type === &quot;tool_result&quot;</code> → collapsible tool result card (show success/fail + output)</li>
+<li><code>content[].type === &quot;text&quot;</code> → plain text, preserve newlines</li>
+</ul>
+<h3>2.8 File Watcher Fallback</h3>
+<p>If hub events miss message updates (e.g., the session's creator client handles messages internally):</p>
+<pre><code class="language-javascript">const watchers = new Map();  // sessionId → fs.FSWatcher
+
+function watchMessages(sessionId, onChange) {
+  const path = join(SESSIONS_DIR, sessionId, `${sessionId}.messages.json`);
+  if (watchers.has(sessionId)) return;
+  
+  const watcher = fs.watch(path, (eventType) =&gt; {
+    if (eventType === 'change') {
+      // Debounce: wait 100ms for write to complete
+      clearTimeout(watchers.get(sessionId + '_timeout'));
+      watchers.set(sessionId + '_timeout', setTimeout(() =&gt; {
+        const data = JSON.parse(fs.readFileSync(path, 'utf8'));
+        onChange(data.messages);
+      }, 100));
+    }
+  });
+  
+  watchers.set(sessionId, watcher);
+}
+</code></pre>
+<hr />
+<h2>3. HTTP Server</h2>
+<p>Pure <code>node:http</code>, no Express, no framework.</p>
+<h3>3.1 Routes</h3>
+<table>
+<thead>
+<tr>
+  <th>Method</th>
+  <th>Path</th>
+  <th>Response</th>
+  <th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td>GET</td>
+  <td><code>/</code></td>
+  <td>200 <code>text/html</code></td>
+  <td>Serves embedded <code>index.html</code> (Pico CSS + Alpine.js)</td>
+</tr>
+<tr>
+  <td>GET</td>
+  <td><code>/api/sessions</code></td>
+  <td>200 <code>application/json</code></td>
+  <td>Array of <code>SessionRecord</code></td>
+</tr>
+<tr>
+  <td>GET</td>
+  <td><code>/api/events</code></td>
+  <td>200 SSE stream</td>
+  <td>Real-time push (sessions + messages)</td>
+</tr>
+<tr>
+  <td>GET</td>
+  <td><code>/api/messages/:id</code></td>
+  <td>200 <code>application/json</code></td>
+  <td><code>{ messages: [...] }</code> from <code>.messages.json</code></td>
+</tr>
+<tr>
+  <td>POST</td>
+  <td><code>/api/send/:id</code></td>
+  <td>200</td>
+  <td>Sends user message to session via <code>HubSessionClient</code></td>
+</tr>
+<tr>
+  <td>POST</td>
+  <td><code>/api/open/:id</code></td>
+  <td>200</td>
+  <td>Spawns terminal with <code>cline --id &lt;id&gt;</code></td>
+</tr>
+<tr>
+  <td>GET</td>
+  <td><code>/health</code></td>
+  <td>200</td>
+  <td>Hub connection status</td>
+</tr>
+</tbody>
+</table>
+<h3>3.2 Static File Serving</h3>
+<p>The <code>index.html</code> content is embedded as a JavaScript string constant in <code>dashboard.js</code> (no <code>fs.readFileSync</code> at runtime). This keeps the deployment to a single file.</p>
+<p>Alternatively, for development, <code>GET /</code> can read from <code>./index.html</code> in the same directory.</p>
+<h3>3.3 Port Selection</h3>
+<pre><code class="language-javascript">const PORT = parseInt(process.env.PORT || '0', 10); // 0 = random free port
+</code></pre>
+<p>On startup, print the URL: <code>Dashboard running at http://localhost:${PORT}</code></p>
+<hr />
+<h2>4. Frontend</h2>
+<p>Single <code>index.html</code> with embedded CSS and vanilla JavaScript. No build step.</p>
+<p><strong>Libraries (CDN):</strong></p>
+<pre><code class="language-html">&lt;link rel=&quot;stylesheet&quot; href=&quot;https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css&quot;&gt;
+&lt;script defer src=&quot;https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js&quot;&gt;&lt;/script&gt;
+</code></pre>
+<h3>4.1 Layout — Dashboard View</h3>
+<pre><code>┌─────────────────────────────────────────────────────────────┐
+│  Cline Agent Dashboard           [x] Hide trivial   Filter  │
+├─────────────────────────────────────────────────────────────┤
+│ ● Running (3)  ● Idle (0)  ● Completed (12)  ● Failed (8)  │
+├──────┬───────────┬──────────┬──────────┬─────────┬─────────┤
+│Status│  Title    │ Project  │  Model   │ Started │ Actions │
+├──────┼───────────┼──────────┼──────────┼─────────┼─────────┤
+│ 🟢   │ Build ... │ ~/.cline │ deep...  │ 2m ago  │ [Chat]  │
+│ 🟠   │ Fix ...   │ ~/.cline │ deep...  │ 45m ago │ [Chat]  │
+│ ⚪   │ exit      │ ~/.cline │ deep...  │ 1d ago  │ [Chat]  │
+│ 🔴   │ migrate.. │ ~/projs  │ gemin..  │ 2d ago  │ [Chat]  │
+└──────┴───────────┴──────────┴──────────┴─────────┴─────────┘
+</code></pre>
+<h3>4.2 Layout — Chat Panel (Modal/Drawer)</h3>
+<pre><code>┌─────────────────────────────────────────────────────────────┐
+│  ← Back to Dashboard    Session: Build finance tracker      │
+├─────────────────────────────────────────────────────────────┤
+│                                                             │
+│  ┌─────────────────────────────────────────────────────┐   │
+│  │ 🤖 Assistant                                        │   │
+│  │ I'll help you build the dashboard. What would you   │   │
+│  │ like to start with?                                 │   │
+│  └─────────────────────────────────────────────────────┘   │
+│                                                             │
+│  ┌─────────────────────────────────────────────────────┐   │
+│  │ 👤 You                                              │   │
+│  │ Let me chat to the agent from this web app          │   │
+│  └─────────────────────────────────────────────────────┘   │
+│                                                             │
+│  ┌──────────┐                                               │
+│  │ 🔧 tool_use: run_commands                               │
+│  │ Input: { &quot;commands&quot;: [&quot;node -e ...&quot;] }                  │
+│  └──────────┘                                               │
+│                                                             │
+│  ┌─────────────────────────────────────────────────────┐   │
+│  │ ✅ tool_result: run_commands                          │   │
+│  │ Output: 3.1.3                                         │   │
+│  └─────────────────────────────────────────────────────┘   │
+│                                                             │
+├─────────────────────────────────────────────────────────────┤
+│  [Type a message...                    ] [Send] [Open in □] │
+└─────────────────────────────────────────────────────────────┘
+</code></pre>
+<h3>4.3 Alpine.js State</h3>
+<pre><code class="language-html">&lt;div x-data=&quot;dashboard()&quot;&gt;
+  &lt;!-- Session list --&gt;
+  &lt;table&gt;
+    &lt;template x-for=&quot;session in filteredSessions&quot; :key=&quot;session.sessionId&quot;&gt;
+      &lt;tr @click=&quot;openChat(session.sessionId)&quot;&gt;
+        &lt;td&gt;&lt;span :class=&quot;'badge ' + session.status&quot; x-text=&quot;session.status&quot;&gt;&lt;/span&gt;&lt;/td&gt;
+        &lt;td x-text=&quot;session.title&quot;&gt;&lt;/td&gt;
+        &lt;td x-text=&quot;session.project&quot;&gt;&lt;/td&gt;
+        &lt;td x-text=&quot;session.model&quot;&gt;&lt;/td&gt;
+        &lt;td x-text=&quot;session.started&quot;&gt;&lt;/td&gt;
+        &lt;td&gt;&lt;button @click.stop=&quot;openChat(session.sessionId)&quot;&gt;Chat&lt;/button&gt;&lt;/td&gt;
+      &lt;/tr&gt;
+    &lt;/template&gt;
+  &lt;/table&gt;
+  
+  &lt;!-- Chat panel (modal) --&gt;
+  &lt;dialog :open=&quot;activeChat&quot; x-show=&quot;activeChat&quot;&gt;
+    &lt;article&gt;
+      &lt;header&gt;
+        &lt;button @click=&quot;activeChat = null&quot;&gt;← Back&lt;/button&gt;
+        &lt;h3 x-text=&quot;chatTitle&quot;&gt;&lt;/h3&gt;
+      &lt;/header&gt;
+      &lt;div class=&quot;messages&quot; x-ref=&quot;messagesContainer&quot;&gt;
+        &lt;template x-for=&quot;msg in chatMessages&quot; :key=&quot;msg.id&quot;&gt;
+          &lt;div :class=&quot;'message ' + msg.role&quot;&gt;
+            &lt;template x-for=&quot;block in msg.content&quot; :key=&quot;block.type&quot;&gt;
+              &lt;div x-show=&quot;block.type === 'text'&quot; x-text=&quot;block.text&quot;&gt;&lt;/div&gt;
+              &lt;details x-show=&quot;block.type === 'tool_use'&quot;&gt;
+                &lt;summary&gt;🔧 &lt;span x-text=&quot;block.name&quot;&gt;&lt;/span&gt;&lt;/summary&gt;
+                &lt;pre&gt;&lt;code x-text=&quot;JSON.stringify(block.input, null, 2)&quot;&gt;&lt;/code&gt;&lt;/pre&gt;
+              &lt;/details&gt;
+            &lt;/template&gt;
+          &lt;/div&gt;
+        &lt;/template&gt;
+      &lt;/div&gt;
+      &lt;footer&gt;
+        &lt;input x-model=&quot;chatInput&quot; @keydown.enter=&quot;sendMessage()&quot; placeholder=&quot;Type a message...&quot;&gt;
+        &lt;button @click=&quot;sendMessage()&quot;&gt;Send&lt;/button&gt;
+        &lt;button @click=&quot;openTerminal()&quot;&gt;Open in Terminal&lt;/button&gt;
+      &lt;/footer&gt;
+    &lt;/article&gt;
+  &lt;/dialog&gt;
+&lt;/div&gt;
+</code></pre>
+<h3>4.4 Column Definitions</h3>
+<table>
+<thead>
+<tr>
+  <th>Column</th>
+  <th>Source</th>
+  <th>Format</th>
+  <th>Sortable</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td>Status</td>
+  <td><code>session.status</code> + PID liveness</td>
+  <td>Badge with color</td>
+  <td>Yes</td>
+</tr>
+<tr>
+  <td>Title</td>
+  <td><code>metadata.title</code> or <code>metadata.prompt</code></td>
+  <td>Truncated to ~60 chars</td>
+  <td>Yes</td>
+</tr>
+<tr>
+  <td>Project</td>
+  <td><code>session.cwd</code></td>
+  <td>Path relative to <code>~/</code></td>
+  <td>Yes</td>
+</tr>
+<tr>
+  <td>Model</td>
+  <td><code>metadata.model</code></td>
+  <td>Provider/model string</td>
+  <td>Yes</td>
+</tr>
+<tr>
+  <td>Started</td>
+  <td><code>session.createdAt</code></td>
+  <td>Relative time (&quot;2m ago&quot;)</td>
+  <td>Yes</td>
+</tr>
+<tr>
+  <td>Cost</td>
+  <td><code>metadata.totalCost</code></td>
+  <td><code>$0.068</code></td>
+  <td>Yes</td>
+</tr>
+<tr>
+  <td>Actions</td>
+  <td>—</td>
+  <td>Chat / Open buttons</td>
+  <td>No</td>
+</tr>
+</tbody>
+</table>
+<h3>4.5 Status Badge Mapping</h3>
+<table>
+<thead>
+<tr>
+  <th>Hub Status</th>
+  <th>Display</th>
+  <th>Color</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td><code>running</code> + PID alive</td>
+  <td><code>running</code></td>
+  <td><code>#22c55e</code> (green)</td>
+</tr>
+<tr>
+  <td><code>running</code> + PID dead</td>
+  <td><code>stale</code></td>
+  <td><code>#f97316</code> (orange)</td>
+</tr>
+<tr>
+  <td><code>idle</code></td>
+  <td><code>idle</code></td>
+  <td><code>#eab308</code> (yellow)</td>
+</tr>
+<tr>
+  <td><code>completed</code></td>
+  <td><code>completed</code></td>
+  <td><code>#6b7280</code> (gray)</td>
+</tr>
+<tr>
+  <td><code>failed</code></td>
+  <td><code>failed</code></td>
+  <td><code>#ef4444</code> (red)</td>
+</tr>
+</tbody>
+</table>
+<h3>4.6 SSE Client</h3>
+<pre><code class="language-javascript">const events = new EventSource('/api/events');
+events.onmessage = (msg) =&gt; {
+  const event = JSON.parse(msg.data);
+  if (event.type === 'session.created' || event.type === 'session.updated') {
+    upsertSession(event.session);
+  }
+  if (event.type === 'session.detached') {
+    markRemoved(event.sessionId);
+  }
+  if (event.type === 'message.new') {
+    appendMessage(event.sessionId, event.message);
+  }
+  render();
+};
+</code></pre>
+<p>Fallback: if SSE connection drops, fall back to polling <code>GET /api/sessions</code> every 5 seconds.</p>
+<h3>4.7 Chat Message Sending</h3>
+<pre><code class="language-javascript">async function sendMessage(sessionId, text) {
+  const res = await fetch(`/api/send/${sessionId}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text })
+  });
+  if (!res.ok) {
+    // Fallback: show &quot;Open in Terminal&quot; button
+    showTerminalFallback(sessionId);
+  }
+}
+</code></pre>
+<h3>4.8 Trivial Session Filter</h3>
+<p>A &quot;Hide trivial&quot; checkbox (persisted to <code>localStorage</code>) suppresses sessions whose <code>metadata.title</code> matches:</p>
+<ul>
+<li>Single word (no spaces)</li>
+<li>Common trivial patterns: <code>test</code>, <code>exit</code>, <code>quit</code>, <code>hello</code>, <code>help</code></li>
+<li>Prompt is <code>&lt;user_input&gt;...&lt;/user_input&gt;</code> wrapping only the above
+spawn('osascript', [
+'-e', <code>tell application &quot;Terminal&quot; to activate</code>,
+'-e', <code>tell application &quot;Terminal&quot; to do script &quot;cd ${cwd} &amp;&amp; cline --id ${sessionId}&quot; in front window</code>
+]);
+res.writeHead(200);
+res.end('{}');
+});</li>
+</ul>
+<pre><code>
+**Important:** The `cline --id` flag was confirmed via CLI docs (`--id &lt;session-id&gt; Resume an existing session by ID`). The full command is:
+```bash
+cline --id &lt;sessionId&gt; -c &lt;cwd&gt;
+</code></pre>
+<hr />
+<h2>5. Session List Logic</h2>
+<h3>5.1 Data Shape in Server</h3>
+<p>In-memory session cache maintained by the dashboard process:</p>
+<pre><code class="language-javascript">let sessions = [];   // populated on connect via listSessions(200)
+</code></pre>
+<h3>5.2 Subagent Filtering</h3>
+<p>The <code>SessionRecord</code> from the hub does <strong>not</strong> include an <code>is_subagent</code> boolean. Instead, subagent relationship is determined by:</p>
+<ul>
+<li>The <code>participants[].role</code> field (creator vs spawned agent)</li>
+<li>The <code>metadata.parentSessionId</code> field (present on subagent sessions)</li>
+</ul>
+<pre><code class="language-javascript">function isRootSession(session) {
+  return !session.metadata?.parentSessionId &amp;&amp; !session.parentSessionId;
+}
+</code></pre>
+<p>For v1: filter to root sessions only (where <code>parentSessionId</code> is absent).</p>
+<h3>5.3 Sorting</h3>
+<p>Default sort order (descending priority):</p>
+<ol>
+<li><code>running</code> → <code>stale</code> → <code>idle</code> → <code>failed</code> → <code>completed</code></li>
+<li>Within same status: <code>updatedAt</code> descending (most recent first)</li>
+</ol>
+<h3>5.4 Cost Display</h3>
+<pre><code class="language-javascript">function formatCost(usd) {
+  if (usd == null || usd === 0) return '—';
+  return '$' + usd.toFixed(3);
+}
+</code></pre>
+<hr />
+<h2>6. Stale Session Detection</h2>
+<p>On backend, when rendering the session list or receiving a <code>session.updated</code> event:</p>
+<pre><code class="language-javascript">const pidCache = new Map();  // pid → boolean (alive), TTL 5 seconds
+
+async function isPidAlive(pid) {
+  const cached = pidCache.get(pid);
+  if (cached &amp;&amp; Date.now() - cached.ts &lt; 5000) return cached.alive;
+  let alive = false;
+  try {
+    process.kill(pid, 0);  // signal 0 = probe only
+    alive = true;
+  } catch (e) {
+    alive = false;  // ESRCH = no such process, EPERM = alive but no perms
+    if (e.code === 'EPERM') alive = true;
+  }
+  pidCache.set(pid, { alive, ts: Date.now() });
+  return alive;
+}
+</code></pre>
+<p>Note: <code>kill(0)</code> returns <code>true</code> for processes owned by the current user; <code>EPERM</code> means alive but belongs to another user (treat as alive). <code>ESRCH</code> or <code>ENOENT</code> means dead.</p>
+<hr />
+<h2>7. File Structure</h2>
+<pre><code>~/.cline/
+  dashboard/
+    dashboard.js          ← main server (single file, all JS)
+    README.md             ← usage instructions
+    plans/
+      dashboard-prd.md         ← this PRD
+      dashboard-techspec.md    ← this tech spec
+    index.html            ← optional external file (or embedded in dashboard.js)
+</code></pre>
+<h3>7.1 Single File Deployment</h3>
+<p><code>dashboard.js</code> embeds the HTML as a string constant. No <code>index.html</code> file is required at runtime. For development, it can optionally read <code>./index.html</code> from disk.</p>
+<hr />
+<h2>8. Milestones</h2>
+<table>
+<thead>
+<tr>
+  <th>#</th>
+  <th>Milestone</th>
+  <th>Deliverable</th>
+  <th>Time</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td>M1</td>
+  <td><strong>Hub probe</strong></td>
+  <td>Script that connects to hub, lists 5 sessions, prints them. Verify <code>HubSessionClient.readMessages()</code> works.</td>
+  <td>20 min</td>
+</tr>
+<tr>
+  <td>M2</td>
+  <td><strong>HTTP server + sessions</strong></td>
+  <td><code>dashboard.js</code> serves JSON at <code>/api/sessions</code> with Pico CSS table</td>
+  <td>30 min</td>
+</tr>
+<tr>
+  <td>M3</td>
+  <td><strong>Chat read</strong></td>
+  <td><code>GET /api/messages/:id</code> reads <code>.messages.json</code>, renders in modal</td>
+  <td>30 min</td>
+</tr>
+<tr>
+  <td>M4</td>
+  <td><strong>Chat send (verify)</strong></td>
+  <td>Test <code>HubSessionClient.sendRuntimeSession()</code> — if it works, wire <code>POST /api/send/:id</code></td>
+  <td>20 min</td>
+</tr>
+<tr>
+  <td>M5</td>
+  <td><strong>SSE push</strong></td>
+  <td>Real-time session + message updates from hub events to browser</td>
+  <td>30 min</td>
+</tr>
+<tr>
+  <td>M6</td>
+  <td><strong>File watcher fallback</strong></td>
+  <td><code>fs.watch()</code> on <code>.messages.json</code> for sessions where hub events miss</td>
+  <td>15 min</td>
+</tr>
+<tr>
+  <td>M7</td>
+  <td><strong>Open in Terminal</strong></td>
+  <td><code>POST /api/open/:id</code> spawns terminal with <code>cline --id</code></td>
+  <td>15 min</td>
+</tr>
+<tr>
+  <td>M8</td>
+  <td><strong>Stale detection</strong></td>
+  <td><code>kill(0)</code> PID check, orange badge for dead processes</td>
+  <td>15 min</td>
+</tr>
+<tr>
+  <td>M9</td>
+  <td><strong>Polish</strong></td>
+  <td>Trivial filter, relative timestamps, Alpine.js reactivity, dark mode</td>
+  <td>30 min</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2>9. Known Limitations</h2>
+<table>
+<thead>
+<tr>
+  <th>Limitation</th>
+  <th>Impact</th>
+  <th>Planned Fix</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td><code>@cline/core</code> path is hardcoded to asdf install dir</td>
+  <td>Breaks if Cline is installed elsewhere</td>
+  <td>Startup probe walks node_modules upward</td>
+</tr>
+<tr>
+  <td>Hub lock file path may change between Cline versions</td>
+  <td>Connection fails</td>
+  <td>Probe common locations, log clear error</td>
+</tr>
+<tr>
+  <td>No HTTPS for local server</td>
+  <td>Fine on localhost; not accessible remotely</td>
+  <td>Not a concern for v1</td>
+</tr>
+<tr>
+  <td><code>osascript</code> to open Terminal is macOS only</td>
+  <td>Linux/Windows would need different launcher</td>
+  <td>v1 is macOS-only</td>
+</tr>
+<tr>
+  <td><code>SessionRecord</code> lacks <code>is_subagent</code> field</td>
+  <td>Must infer from <code>parentSessionId</code></td>
+  <td>Works correctly, just less explicit</td>
+</tr>
+<tr>
+  <td><strong>Chat send may not work via <code>HubSessionClient</code></strong></td>
+  <td>Dashboard might be read-only for chat</td>
+  <td>Fallback to &quot;Open in Terminal&quot; for input; investigate hub capability API for v2</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2>10. Future Enhancements (v2)</h2>
+<ul>
+<li><strong>Bi-directional chat via hub:</strong> Investigate hub capability API for sending messages without terminal fallback</li>
+<li><strong>Cost tracking:</strong> Aggregate session costs per day/model in a small chart</li>
+<li><strong>Scheduled agents tab:</strong> Expose <code>listSchedules()</code> from <code>HubSessionClient</code></li>
+<li><strong>Desktop notifications:</strong> Use <code>client.subscribeUI({ onSessionDetached })</code> → <code>Notification API</code></li>
+<li><strong>Cross-platform launcher:</strong> Detect OS and use <code>xdg-open</code> / <code>wt</code> for non-macOS</li>
+</ul>
+</body></html>

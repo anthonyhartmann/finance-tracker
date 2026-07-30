@@ -1,0 +1,45 @@
+{
+  "name": "finance-tracker-local",
+  "version": "1.0.0",
+  "description": "Local TypeScript runner for the finance tracker — still talks to Google Sheets",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "npm run build && node dist/index.js",
+    "sync": "npm run build && node -e \"require('./dist/sync').syncAllProductionAccounts()\"",
+    "refresh": "npm run build && node -e \"require('./dist/dashboard').refresh()\"",
+    "server": "npm run build && node dist/server.js",
+    "typecheck": "tsc --noEmit",
+    "test": "npm run typecheck && jest --verbose",
+    "test:coverage": "jest --coverage --verbose",
+    "lint": "eslint src/",
+    "lint:fix": "eslint src/ --fix",
+    "dev": "ts-node src/index.ts",
+    "build:gas": "npm run typecheck && node build-gas.js",
+    "verify:gas": "npm run build:gas && node verify-gas-bundle.js",
+    "deploy:gas": "npm run verify:gas && cd .. && clasp push"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "googleapis": "^140.0.0",
+    "node-cron": "^3.0.3"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/google-apps-script": "^2.0.11",
+    "@types/jest": "^30.0.0",
+    "@types/node": "^20.14.0",
+    "@typescript-eslint/eslint-plugin": "^8.65.0",
+    "@typescript-eslint/parser": "^8.65.0",
+    "esbuild": "^0.28.1",
+    "eslint": "^9.39.5",
+    "jest": "^30.4.2",
+    "ts-jest": "^29.4.12",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.5.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
