@@ -3,7 +3,7 @@
 > **Document:** Technical Specification
 > **Date:** 2026-07-26
 > **Version:** v1.0
-> **Companion:** See `dashboard-prd-20260726.md` for product requirements
+> **Companion:** See `agent plans/dashboard-prd-20260726.md` for product requirements
 > **Status:** Draft
 
 ---
