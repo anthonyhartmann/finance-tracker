@@ -141,6 +141,41 @@ describe('calculateSpend', () => {
     const result = await calculateSpend('2026-07-01', '2026-07-31');
     expect(result).toBe(0);
   });
+
+  it('deduplicates transactions with case-insensitive transaction_id', async () => {
+    mockSheetApi.getValues.mockResolvedValue([
+      ['account_name', 'date', 'merchant_name', 'amount', 'transaction_id', 'account_id', 'name', 'category', 'payment_channel', 'pending', 'currency', 'synced_at'],
+      ['Bank', '2026-08-05', 'Zelle', '100.00', 'ABC123XYZ', 'acct1', 'Zelle payment to JANE', 'TRANSFER_OUT', 'online', 'FALSE', 'USD', '2026-08-05'],
+      ['Zelle App', '2026-08-06', 'Zelle', '100.00', 'abc123xyz', 'acct2', 'Zelle Transfer CONF# U64VWXCZV', 'TRANSFER_OUT', 'online', 'FALSE', 'USD', '2026-08-06'],
+    ]);
+
+    const result = await calculateSpend('2026-08-01', '2026-08-31');
+    expect(result).toBe(100.00);
+  });
+
+  it('excludes ATM withdrawals from spend', async () => {
+    mockSheetApi.getValues.mockResolvedValue([
+      ['account_name', 'date', 'merchant_name', 'amount', 'transaction_id', 'account_id', 'name', 'category', 'payment_channel', 'pending', 'currency', 'synced_at'],
+      ['Chase', '2026-08-05', 'ATM Withdrawal', '200.00', 'tx1', 'acct1', 'ATM WITHDRWL CHASE', 'PAYMENT', 'in store', 'FALSE', 'USD', '2026-08-05'],
+      ['Chase', '2026-08-05', 'Groceries', '50.00', 'tx2', 'acct1', 'Trader Joe', 'FOOD', 'in store', 'FALSE', 'USD', '2026-08-05'],
+    ]);
+
+    const result = await calculateSpend('2026-08-01', '2026-08-31');
+    expect(result).toBe(50.00);
+  });
+
+  it('excludes transfers to own accounts (brokerage, pershing, fidelity, 401k, ally, savings, checking)', async () => {
+    mockSheetApi.getValues.mockResolvedValue([
+      ['account_name', 'date', 'merchant_name', 'amount', 'transaction_id', 'account_id', 'name', 'category', 'payment_channel', 'pending', 'currency', 'synced_at'],
+      ['Chase', '2026-08-05', 'Pershing LLC', '3500.00', 'tx1', 'acct1', 'Transfer to Pershing Brokerage', 'TRANSFER_OUT', 'online', 'FALSE', 'USD', '2026-08-05'],
+      ['Chase', '2026-08-06', 'Fidelity', '1000.00', 'tx2', 'acct1', 'Fidelity 401k transfer', 'TRANSFER_OUT', 'online', 'FALSE', 'USD', '2026-08-06'],
+      ['Chase', '2026-08-07', 'Ally Bank', '500.00', 'tx3', 'acct1', 'Transfer to Ally savings', 'TRANSFER_OUT', 'online', 'FALSE', 'USD', '2026-08-07'],
+      ['Chase', '2026-08-08', 'Dinner', '75.00', 'tx4', 'acct1', 'Restaurant', 'FOOD', 'in store', 'FALSE', 'USD', '2026-08-08'],
+    ]);
+
+    const result = await calculateSpend('2026-08-01', '2026-08-31');
+    expect(result).toBe(75.00);
+  });
 });
 
 describe('calculateInterviewIncome', () => {

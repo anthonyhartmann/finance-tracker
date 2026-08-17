@@ -295,6 +295,18 @@
     } catch {
     }
   }
+  async function rotateLog() {
+    try {
+      const data = await getValues(SHEET_NAME);
+      if (!data || data.length <= MAX_DEBUG_ROWS) return;
+      const headers = data[0];
+      const tail = data.slice(data.length - (MAX_DEBUG_ROWS - 1));
+      const trimmed = [headers, ...tail];
+      await clearTab(SHEET_NAME, false);
+      await setValues(`${SHEET_NAME}!A1`, trimmed);
+    } catch {
+    }
+  }
   async function log(fn, message) {
     const timestamp = getTimestamp();
     let safeMessage = String(message);
@@ -304,6 +316,7 @@
     console.log(`[${fn}] ${message}`);
     try {
       await appendRow(SHEET_NAME, [timestamp, fn, safeMessage]);
+      await rotateLog();
     } catch {
     }
   }
@@ -319,13 +332,14 @@
     }
     console.error(`[${fn}] ${msg}`);
   }
-  var SHEET_NAME;
+  var SHEET_NAME, MAX_DEBUG_ROWS;
   var init_debug = __esm({
     "src/debug/index.ts"() {
       "use strict";
       init_sheet_api();
       init_runtime();
       SHEET_NAME = "debug";
+      MAX_DEBUG_ROWS = 1e3;
     }
   });
 
@@ -613,12 +627,13 @@
       for (let r = 1; r < data.length; r++) {
         const id = String(data[r][effectiveIdCol] || "");
         if (!id) continue;
+        const lowerKey = id.toLowerCase();
         const obj = {};
         for (let c = 0; c < oldHeader.length; c++) {
           if (oldHeader[c]) obj[oldHeader[c]] = data[r][c];
         }
-        byId[id] = obj;
-        order.push(id);
+        byId[lowerKey] = obj;
+        order.push(lowerKey);
       }
     }
     const needIds = [];
@@ -650,14 +665,14 @@
     }
     let addedCount = 0, updatedCount = 0, removedCount = 0, dupeCount = 0;
     for (const t of removed) {
-      const rid = String(t.transaction_id);
+      const rid = String(t.transaction_id || "").toLowerCase();
       if (byId[rid]) {
         delete byId[rid];
         removedCount++;
       }
     }
     for (const t of modified) {
-      const mid = String(t.transaction_id);
+      const mid = String(t.transaction_id || "").toLowerCase();
       if (byId[mid]) {
         byId[mid] = t;
         updatedCount++;
@@ -668,7 +683,7 @@
       }
     }
     for (const t of added) {
-      const aid = String(t.transaction_id);
+      const aid = String(t.transaction_id || "").toLowerCase();
       if (byId[aid]) {
         dupeCount++;
         continue;
@@ -819,6 +834,65 @@
       init_debug();
       init_runtime();
       TAB = "recurring";
+    }
+  });
+
+  // src/snapshot/index.ts
+  var snapshot_exports = {};
+  __export(snapshot_exports, {
+    autoSnapshotOnRollover: () => autoSnapshotOnRollover,
+    snapshotCurrentMonth: () => snapshotCurrentMonth,
+    snapshotMonth: () => snapshotMonth
+  });
+  async function snapshotMonth(month) {
+    const suffix = "_" + month;
+    const created = [];
+    const skipped = [];
+    for (const srcName of TABS) {
+      const dstName = srcName + suffix;
+      try {
+        const sheetId = await copySheet(srcName, dstName);
+        if (sheetId !== null) {
+          created.push(dstName);
+        } else {
+          skipped.push(srcName + " (missing)");
+        }
+      } catch {
+        skipped.push(srcName + " (error)");
+      }
+    }
+    await log(
+      "Snapshot.snapshotMonth",
+      "Month " + month + ": created " + created.length + " snapshots" + (skipped.length ? ", skipped: " + skipped.join(", ") : "")
+    );
+    return { created, skipped };
+  }
+  async function snapshotCurrentMonth() {
+    let month;
+    try {
+      month = await getCell("dashboard", "B4");
+    } catch {
+      await error("Snapshot.snapshotCurrentMonth", "dashboard tab not found");
+      return;
+    }
+    if (!month || typeof month !== "string" || month.indexOf("-") === -1) {
+      await error("Snapshot.snapshotCurrentMonth", "Invalid month in dashboard B4: " + month);
+      return;
+    }
+    return snapshotMonth(month);
+  }
+  async function autoSnapshotOnRollover(previousMonth) {
+    if (!previousMonth) return;
+    await log("Snapshot.autoSnapshotOnRollover", "Auto-snapshotting previous month: " + previousMonth);
+    return snapshotMonth(previousMonth);
+  }
+  var TABS;
+  var init_snapshot = __esm({
+    "src/snapshot/index.ts"() {
+      "use strict";
+      init_sheet_api();
+      init_debug();
+      TABS = ["transactions", "interview_income", "adjustments", "dashboard"];
     }
   });
 
@@ -999,7 +1073,8 @@
   }
   async function fetchAllInvestmentTransactions(startDate, endDate) {
     const all = [];
-    for (const itemName of BANK_ITEMS) {
+    const investmentItems = ["fidelity"];
+    for (const itemName of investmentItems) {
       const token = getAccessToken(itemName);
       if (!token) continue;
       try {
@@ -1219,6 +1294,7 @@
   }
   async function refresh() {
     await log("Dashboard.refresh", "Refreshing dashboard...");
+    await maybeResetManualInputs();
     const ss2 = await getValues(TAB4);
     if (!ss2 || ss2.length === 0) {
       await init();
@@ -1266,6 +1342,8 @@
     const amountCol = header.indexOf("amount");
     const categoryCol = header.indexOf("category");
     const nameCol = header.indexOf("name");
+    const merchantCol = header.indexOf("merchant_name");
+    const txIdCol = header.indexOf("transaction_id");
     if (dateCol < 0 || amountCol < 0) {
       await log("Dashboard.calculateSpend", "Missing columns: date=" + dateCol + " amount=" + amountCol);
       return 0;
@@ -1281,9 +1359,24 @@
     let count = 0;
     let skippedDate = 0;
     let skippedTransfer = 0;
+    let skippedAtm = 0;
     let skippedNegative = 0;
+    let skippedDupe = 0;
+    const seenTxIds = /* @__PURE__ */ new Set();
+    const OWN_ACCOUNT_KEYWORDS = ["brokerage", "pershing", "fidelity", "401k", "ally", "savings", "checking"];
     for (let r = 1; r < tx.length; r++) {
       const row = tx[r];
+      if (txIdCol >= 0) {
+        const rawTxId = String(row[txIdCol] || "").trim();
+        if (rawTxId) {
+          const lowerTxId = rawTxId.toLowerCase();
+          if (seenTxIds.has(lowerTxId)) {
+            skippedDupe++;
+            continue;
+          }
+          seenTxIds.add(lowerTxId);
+        }
+      }
       const rawDate = row[dateCol];
       let dateStr;
       if (rawDate instanceof Date) {
@@ -1297,7 +1390,15 @@
       }
       const category = String(row[categoryCol] || "").toUpperCase();
       const name = String(row[nameCol] || "").toLowerCase();
-      if (category === "TRANSFER" || category === "LOAN_PAYMENTS" || name.indexOf("transfer") >= 0) {
+      const merchant = merchantCol >= 0 ? String(row[merchantCol] || "").toLowerCase() : "";
+      const combinedText = name + " " + merchant;
+      const isAtm = combinedText.includes("atm") || combinedText.includes("withdrawal") || combinedText.includes("withdrwl");
+      if (isAtm) {
+        skippedAtm++;
+        continue;
+      }
+      const isOwnAccountTransfer = OWN_ACCOUNT_KEYWORDS.some((kw) => combinedText.includes(kw));
+      if (category === "TRANSFER" || category === "LOAN_PAYMENTS" || name.indexOf("transfer") >= 0 || isOwnAccountTransfer) {
         skippedTransfer++;
         continue;
       }
@@ -1309,7 +1410,7 @@
         skippedNegative++;
       }
     }
-    await log("Dashboard.calculateSpend", "Counted " + count + " transactions, total=$" + total + " (skipped: " + skippedDate + " date, " + skippedTransfer + " transfer, " + skippedNegative + " negative)");
+    await log("Dashboard.calculateSpend", "Counted " + count + " transactions, total=$" + total + " (skipped: " + skippedDate + " date, " + skippedTransfer + " transfer, " + skippedAtm + " ATM, " + skippedDupe + " dupe, " + skippedNegative + " negative)");
     return Math.round(total * 100) / 100;
   }
   async function calculateInterviewIncome(month) {
@@ -1386,6 +1487,25 @@
     }
     await log("Dashboard.calculateManualAdjustments", "Counted " + count + " adjustments, total=$" + total + " (skipped " + skipped + " outside date range)");
     return Math.round(total * 100) / 100;
+  }
+  async function maybeResetManualInputs() {
+    const ss2 = await getValues("dashboard");
+    if (!ss2 || ss2.length < 31) return;
+    const storedMonth = await getCell("dashboard", "B32");
+    const currentMonth = String(ss2[3][1] || "").trim();
+    if (storedMonth && String(storedMonth) !== currentMonth) {
+      await log("Dashboard.maybeResetManualInputs", "Month rollover detected: " + storedMonth + " -> " + currentMonth);
+      try {
+        const { autoSnapshotOnRollover: autoSnapshotOnRollover2 } = await Promise.resolve().then(() => (init_snapshot(), snapshot_exports));
+        await autoSnapshotOnRollover2(String(storedMonth));
+      } catch (e) {
+        await error("Dashboard.maybeResetManualInputs", "Snapshot failed: " + (e instanceof Error ? e.message : String(e)));
+      }
+      await setCell("dashboard", "B30", 0);
+      await setCell("dashboard", "B31", 0);
+      await log("Dashboard.maybeResetManualInputs", "Reset manual inputs for new month: " + currentMonth);
+    }
+    await setCell("dashboard", "B32", currentMonth);
   }
   function padMonth(m) {
     return m < 10 ? "0" + m : String(m);

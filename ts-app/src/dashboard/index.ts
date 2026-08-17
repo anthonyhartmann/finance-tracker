@@ -68,6 +68,7 @@ export async function init(): Promise<void> {
 
 export async function refresh(): Promise<void> {
   await Debug.log('Dashboard.refresh', 'Refreshing dashboard...');
+  await maybeResetManualInputs();
   const ss = await sheetApi.getValues(TAB);
   if (!ss || ss.length === 0) {
     await init();
@@ -127,6 +128,8 @@ export async function calculateSpend(startDate: string, endDate: string): Promis
   const amountCol = header.indexOf('amount');
   const categoryCol = header.indexOf('category');
   const nameCol = header.indexOf('name');
+  const merchantCol = header.indexOf('merchant_name');
+  const txIdCol = header.indexOf('transaction_id');
 
   if (dateCol < 0 || amountCol < 0) {
     await Debug.log('Dashboard.calculateSpend', 'Missing columns: date=' + dateCol + ' amount=' + amountCol);
@@ -147,9 +150,28 @@ export async function calculateSpend(startDate: string, endDate: string): Promis
   let count = 0;
   let skippedDate = 0;
   let skippedTransfer = 0;
+  let skippedAtm = 0;
   let skippedNegative = 0;
+  let skippedDupe = 0;
+
+  const seenTxIds = new Set<string>();
+  const OWN_ACCOUNT_KEYWORDS = ['brokerage', 'pershing', 'fidelity', '401k', 'ally', 'savings', 'checking'];
+
   for (let r = 1; r < tx.length; r++) {
     const row = tx[r];
+
+    if (txIdCol >= 0) {
+      const rawTxId = String(row[txIdCol] || '').trim();
+      if (rawTxId) {
+        const lowerTxId = rawTxId.toLowerCase();
+        if (seenTxIds.has(lowerTxId)) {
+          skippedDupe++;
+          continue;
+        }
+        seenTxIds.add(lowerTxId);
+      }
+    }
+
     const rawDate: unknown = row[dateCol];
     // Handle both string dates and Date objects from GAS
     let dateStr: string;
@@ -165,7 +187,17 @@ export async function calculateSpend(startDate: string, endDate: string): Promis
 
     const category = String(row[categoryCol] || '').toUpperCase();
     const name = String(row[nameCol] || '').toLowerCase();
-    if (category === 'TRANSFER' || category === 'LOAN_PAYMENTS' || name.indexOf('transfer') >= 0) {
+    const merchant = merchantCol >= 0 ? String(row[merchantCol] || '').toLowerCase() : '';
+    const combinedText = name + ' ' + merchant;
+
+    const isAtm = combinedText.includes('atm') || combinedText.includes('withdrawal') || combinedText.includes('withdrwl');
+    if (isAtm) {
+      skippedAtm++;
+      continue;
+    }
+
+    const isOwnAccountTransfer = OWN_ACCOUNT_KEYWORDS.some((kw) => combinedText.includes(kw));
+    if (category === 'TRANSFER' || category === 'LOAN_PAYMENTS' || name.indexOf('transfer') >= 0 || isOwnAccountTransfer) {
       skippedTransfer++;
       continue;
     }
@@ -179,7 +211,7 @@ export async function calculateSpend(startDate: string, endDate: string): Promis
     }
   }
 
-  await Debug.log('Dashboard.calculateSpend', 'Counted ' + count + ' transactions, total=$' + total + ' (skipped: ' + skippedDate + ' date, ' + skippedTransfer + ' transfer, ' + skippedNegative + ' negative)');
+  await Debug.log('Dashboard.calculateSpend', 'Counted ' + count + ' transactions, total=$' + total + ' (skipped: ' + skippedDate + ' date, ' + skippedTransfer + ' transfer, ' + skippedAtm + ' ATM, ' + skippedDupe + ' dupe, ' + skippedNegative + ' negative)');
   return Math.round(total * 100) / 100;
 }
 

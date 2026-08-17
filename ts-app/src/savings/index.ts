@@ -160,8 +160,9 @@ export async function fetchAllTransactions(startDate: string, endDate: string): 
 
 export async function fetchAllInvestmentTransactions(startDate: string, endDate: string): Promise<PlaidInvestmentTransaction[]> {
   const all: PlaidInvestmentTransaction[] = [];
+  const investmentItems = ['fidelity'];
 
-  for (const itemName of BANK_ITEMS) {
+  for (const itemName of investmentItems) {
     const token = PLAID.getAccessToken(itemName);
     if (!token) continue;
 

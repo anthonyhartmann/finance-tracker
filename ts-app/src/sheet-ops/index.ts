@@ -49,12 +49,13 @@ export async function writeTransactions(syncResult: SyncResult | PlaidTransactio
     for (let r = 1; r < data.length; r++) {
       const id = String(data[r][effectiveIdCol] || '');
       if (!id) continue;
+      const lowerKey = id.toLowerCase();
       const obj: Record<string, CellValue> = {};
       for (let c = 0; c < oldHeader.length; c++) {
         if (oldHeader[c]) obj[oldHeader[c]] = data[r][c];
       }
-      byId[id] = obj as unknown as PlaidTransaction;
-      order.push(id);
+      byId[lowerKey] = obj as unknown as PlaidTransaction;
+      order.push(lowerKey);
     }
   }
 
@@ -90,14 +91,14 @@ export async function writeTransactions(syncResult: SyncResult | PlaidTransactio
   let addedCount = 0, updatedCount = 0, removedCount = 0, dupeCount = 0;
 
   for (const t of removed) {
-    const rid = String(t.transaction_id);
+    const rid = String(t.transaction_id || '').toLowerCase();
     if (byId[rid]) {
       delete byId[rid];
       removedCount++;
     }
   }
   for (const t of modified) {
-    const mid = String(t.transaction_id);
+    const mid = String(t.transaction_id || '').toLowerCase();
     if (byId[mid]) {
       byId[mid] = t;
       updatedCount++;
@@ -108,7 +109,7 @@ export async function writeTransactions(syncResult: SyncResult | PlaidTransactio
     }
   }
   for (const t of added) {
-    const aid = String(t.transaction_id);
+    const aid = String(t.transaction_id || '').toLowerCase();
     if (byId[aid]) {
       dupeCount++;
       continue;
