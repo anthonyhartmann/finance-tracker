@@ -6,6 +6,7 @@ import * as sheetApi from '../sheet-api';
 import { getTimezone } from '../runtime';
 
 const SHEET_NAME = 'debug';
+const MAX_DEBUG_ROWS = 1000;
 
 function getTimestamp(): string {
   const now = new Date();
@@ -32,6 +33,23 @@ export async function ensureTab(): Promise<void> {
   }
 }
 
+export async function rotateLog(): Promise<void> {
+  try {
+    const data = await sheetApi.getValues(SHEET_NAME);
+    if (!data || data.length <= MAX_DEBUG_ROWS) return;
+
+    // keep headers (row 0) and the most recent (MAX_DEBUG_ROWS - 1) data rows
+    const headers = data[0];
+    const tail = data.slice(data.length - (MAX_DEBUG_ROWS - 1));
+    const trimmed = [headers, ...tail];
+
+    await sheetApi.clearTab(SHEET_NAME, false);
+    await sheetApi.setValues(`${SHEET_NAME}!A1`, trimmed);
+  } catch {
+    // ignore rotation errors so logging never blocks
+  }
+}
+
 export async function log(fn: string, message: string): Promise<void> {
   const timestamp = getTimestamp();
   let safeMessage = String(message);
@@ -41,6 +59,7 @@ export async function log(fn: string, message: string): Promise<void> {
   console.log(`[${fn}] ${message}`);
   try {
     await sheetApi.appendRow(SHEET_NAME, [timestamp, fn, safeMessage]);
+    await rotateLog();
   } catch {
     // If sheet fails, at least we have console
   }

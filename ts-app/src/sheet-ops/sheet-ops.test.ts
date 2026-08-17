@@ -123,6 +123,23 @@ describe('sheet-ops', () => {
       expect(dataCall![1]).toHaveLength(1);
     });
 
+    it('skips duplicate transactions with case-insensitive transaction_id', async () => {
+      mockSheetApi.getValues.mockResolvedValueOnce([
+        ['account_name', 'date', 'merchant_name', 'amount', 'transaction_id', 'account_id', 'name', 'category', 'payment_channel', 'pending', 'currency', 'synced_at'],
+        ['Chase', '2026-07-10', 'Shop', 10, 'ABC123XYZ', 'a1', 'Shop', 'Shopping', 'online', 'FALSE', 'USD', '2026-07-10'],
+      ]);
+
+      const syncResult = mockedSyncResult({
+        added: [mockedPlaidTransaction({ transaction_id: 'abc123xyz', account_id: 'a1', amount: 10, date: '2026-07-10', name: 'Shop' }).generate()],
+      }).generate();
+
+      await writeTransactions(syncResult);
+
+      const dataCall = mockSheetApi.setValues.mock.calls.find(c => c[0] === 'transactions!A2');
+      expect(dataCall).toBeDefined();
+      expect(dataCall![1]).toHaveLength(1);
+    });
+
     it('accepts a plain array of transactions', async () => {
       mockSheetApi.getValues.mockResolvedValueOnce([['header']]);
       const txns = [mockedPlaidTransaction({ transaction_id: 't1', account_id: 'a1', amount: 5, date: '2026-07-01' }).generate()];

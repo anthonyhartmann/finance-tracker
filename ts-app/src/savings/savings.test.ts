@@ -307,6 +307,19 @@ describe('populateManualAdjustments with normalized months', () => {
   });
 });
 
+describe('investment scope limitation', () => {
+  it('only fetches investment transactions for fidelity', async () => {
+    const { fetchAllInvestmentTransactions } = require('./index');
+    mockPlaid.getAccessToken.mockImplementation((item: string) => (item === 'fidelity' ? 'fidelity-token' : 'other-token'));
+    mockPlaid.investmentTransactionsGet.mockResolvedValue([]);
+
+    await fetchAllInvestmentTransactions('2026-01-01', '2026-01-31');
+
+    expect(mockPlaid.investmentTransactionsGet).toHaveBeenCalledTimes(1);
+    expect(mockPlaid.investmentTransactionsGet).toHaveBeenCalledWith('fidelity-token', '2026-01-01', '2026-01-31');
+  });
+});
+
 describe('backfill regression: qualifying transactions (2026-07-26 outage)', () => {
   // Root cause of the 07-26 → 07-28 sync outage: the `date` loop variable was
   // renamed to `dateStr` but two details.push() calls still referenced `date`,
