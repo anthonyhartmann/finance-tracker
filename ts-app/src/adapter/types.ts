@@ -22,7 +22,7 @@ export interface IConfigAdapter {
 
 export interface ICalendarAdapter {
   getCalendarId(): string;
-  listEvents(daysBack: number, daysForward: number): Promise<Array<{ summary: string; description: string; startDate: Date }>>;
+  listEvents(daysBack: number, daysForward: number): Promise<Array<{ summary: string; description: string; location?: string; startDate: Date }>>;
 }
 
 export interface IHttpAdapter {

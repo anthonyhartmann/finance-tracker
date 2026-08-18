@@ -5,7 +5,7 @@ export const gasCalendar: ICalendarAdapter = {
     return PropertiesService.getScriptProperties().getProperty('CALENDAR_ID') || 'primary';
   },
 
-  listEvents(daysBack: number, daysForward: number): Promise<{ summary: string; description: string; startDate: Date }[]> {
+  listEvents(daysBack: number, daysForward: number): Promise<{ summary: string; description: string; location?: string; startDate: Date }[]> {
     const props = PropertiesService.getScriptProperties();
     const calId = props.getProperty('CALENDAR_ID') || 'primary';
     const cal = calId === 'primary' ? CalendarApp.getDefaultCalendar() : CalendarApp.getCalendarById(calId);
@@ -17,6 +17,7 @@ export const gasCalendar: ICalendarAdapter = {
     return Promise.resolve(events.map(e => ({
       summary: e.getTitle(),
       description: e.getDescription(),
+      location: e.getLocation(),
       startDate: e.getStartTime() as unknown as Date,
     })));
   },

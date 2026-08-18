@@ -183,6 +183,7 @@
           return Promise.resolve(events.map((e) => ({
             summary: e.getTitle(),
             description: e.getDescription(),
+            location: e.getLocation(),
             startDate: e.getStartTime()
           })));
         }
@@ -911,8 +912,7 @@
     const now = /* @__PURE__ */ new Date();
     const interviews = [];
     for (const e of resolved) {
-      const combined = (e.summary + " " + e.description).toLowerCase();
-      if (!looksLikeInterview(combined)) continue;
+      if (!looksLikeInterview(e)) continue;
       const tz = getTimezone();
       const dateStr = e.startDate.toLocaleDateString("en-CA", { timeZone: tz });
       const status = e.startDate < now ? "Past" : "Upcoming";
@@ -938,10 +938,13 @@
       await log("Calendar.dumpCalendarEvents", dateStr + " | " + e.summary + " | " + e.description.substring(0, 60));
     }
   }
-  function looksLikeInterview(text) {
-    const keywords = ["interview", "phone screen", "onsite", "loop interview", "hiring", "recruiter call", "screening"];
-    for (const kw of keywords) {
-      if (text.indexOf(kw) >= 0) return true;
+  function looksLikeInterview(event) {
+    const combined = (event.summary + " " + event.description + " " + (event.location || "")).toLowerCase();
+    if (combined.includes("interviewkickstart") || combined.includes("interview kickstart")) {
+      return true;
+    }
+    if (event.summary.toLowerCase().includes("interview with ")) {
+      return true;
     }
     return false;
   }

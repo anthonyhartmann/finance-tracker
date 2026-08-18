@@ -18,8 +18,7 @@ export async function parseCalendarEvents(daysBack?: number, daysForward?: numbe
   const interviews: { date: string; title: string; status: 'Past' | 'Upcoming' }[] = [];
 
   for (const e of resolved) {
-    const combined = (e.summary + ' ' + e.description).toLowerCase();
-    if (!looksLikeInterview(combined)) continue;
+    if (!looksLikeInterview(e)) continue;
     const tz = getTimezone();
     const dateStr = e.startDate.toLocaleDateString('en-CA', { timeZone: tz });
     const status: 'Past' | 'Upcoming' = e.startDate < now ? 'Past' : 'Upcoming';
@@ -50,8 +49,19 @@ export async function dumpCalendarEvents(daysBack?: number, daysForward?: number
   }
 }
 
-function looksLikeInterview(text: string): boolean {
-  const keywords = ['interview', 'phone screen', 'onsite', 'loop interview', 'hiring', 'recruiter call', 'screening'];
-  for (const kw of keywords) { if (text.indexOf(kw) >= 0) return true; }
+function looksLikeInterview(event: { summary: string; description: string; location?: string }): boolean {
+  const combined = (event.summary + ' ' + event.description + ' ' + (event.location || '')).toLowerCase();
+
+  // Match Interview Kickstart side-job interview events:
+  // 1. Explicit Interview Kickstart link or name in location/description/summary
+  if (combined.includes('interviewkickstart') || combined.includes('interview kickstart')) {
+    return true;
+  }
+
+  // 2. Standardized candidate interview title format: "Interview with <Candidate Name>"
+  if (event.summary.toLowerCase().includes('interview with ')) {
+    return true;
+  }
+
   return false;
 }

@@ -16,7 +16,7 @@ export const nodeCalendar: ICalendarAdapter = {
     return process.env.CALENDAR_ID || 'primary';
   },
 
-  async listEvents(daysBack: number, daysForward: number): Promise<Array<{ summary: string; description: string; startDate: Date }>> {
+  async listEvents(daysBack: number, daysForward: number): Promise<Array<{ summary: string; description: string; location?: string; startDate: Date }>> {
     const { auth } = await authorize();
     const calendar = google.calendar({ version: 'v3', auth });
     const now = new Date();
@@ -31,6 +31,7 @@ export const nodeCalendar: ICalendarAdapter = {
     return events.map(e => ({
       summary: e.summary || '',
       description: e.description || '',
+      location: e.location || '',
       startDate: new Date(e.start?.dateTime || e.start?.date || ''),
     }));
   },
