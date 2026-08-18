@@ -9,7 +9,7 @@ jest.mock('../plaid');
 import * as sheetApi from '../sheet-api';
 import * as Debug from '../debug';
 import * as PLAID from '../plaid';
-import { writeTransactions, writeBalances } from './index';
+import { writeTransactions, writeBalances, pruneOldData } from './index';
 import { mockedPlaidTransaction, mockedPlaidBalance, mockedSyncResult } from '../types/mocks';
 
 const mockSheetApi = jest.mocked(sheetApi);
@@ -184,6 +184,58 @@ describe('sheet-ops', () => {
     it('does not throw when dashboard tab missing', async () => {
       mockSheetApi.setCell.mockRejectedValue(new Error('Tab not found'));
       await expect(writeBalances([mockedPlaidBalance({ available: 100, current: 100 }).generate()])).resolves.toBeUndefined();
+    });
+  });
+
+  describe('pruneOldData', () => {
+    it('prunes rows prior to current month from transactions, interview_income, and adjustments', async () => {
+      mockSheetApi.getValues.mockImplementation(async (tabName) => {
+        if (tabName === 'transactions') {
+          return [
+            ['account_name', 'date', 'merchant_name', 'amount', 'transaction_id'],
+            ['Chase', '2026-07-28', 'Old Tx', 50, 'tx_old'],
+            ['Chase', '2026-08-05', 'New Tx', 20, 'tx_new'],
+          ];
+        }
+        if (tabName === 'interview_income') {
+          return [
+            ['date', 'title', 'status'],
+            ['2026-07-15', 'Old Interview', 'Past'],
+            ['2026-08-10', 'New Interview', 'Upcoming'],
+          ];
+        }
+        if (tabName === 'adjustments') {
+          return [
+            ['date', 'amount', 'notes'],
+            ['2026-07-20', -10, 'July adjustment'],
+            ['2026-08-01', 15, 'August adjustment'],
+          ];
+        }
+        return [];
+      });
+
+      const pruned = await pruneOldData('2026-08');
+
+      expect(pruned).toEqual({
+        transactions: 1,
+        interview_income: 1,
+        adjustments: 1,
+      });
+
+      expect(mockSheetApi.clearTab).toHaveBeenCalledWith('transactions', true);
+      expect(mockSheetApi.setValues).toHaveBeenCalledWith('transactions!A2', [
+        ['Chase', '2026-08-05', 'New Tx', 20, 'tx_new'],
+      ]);
+
+      expect(mockSheetApi.clearTab).toHaveBeenCalledWith('interview_income', true);
+      expect(mockSheetApi.setValues).toHaveBeenCalledWith('interview_income!A2', [
+        ['2026-08-10', 'New Interview', 'Upcoming'],
+      ]);
+
+      expect(mockSheetApi.clearTab).toHaveBeenCalledWith('adjustments', true);
+      expect(mockSheetApi.setValues).toHaveBeenCalledWith('adjustments!A2', [
+        ['2026-08-01', 15, 'August adjustment'],
+      ]);
     });
   });
 });

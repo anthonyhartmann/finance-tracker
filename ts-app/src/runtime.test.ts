@@ -2,7 +2,7 @@
  * runtime.test.ts — Tests for runtime environment helpers.
  */
 
-import { getTimezone } from './runtime';
+import { getTimezone, formatDateCell } from './runtime';
 
 describe('getTimezone', () => {
   const origSession = (global as any).Session;
@@ -57,5 +57,31 @@ describe('getTimezone', () => {
     delete process.env.TIMEZONE;
     // empty string is falsy, so should fall through
     expect(getTimezone()).toBe('America/New_York');
+  });
+});
+
+describe('formatDateCell', () => {
+  it('returns empty string for falsy values', () => {
+    expect(formatDateCell(null)).toBe('');
+    expect(formatDateCell(undefined)).toBe('');
+    expect(formatDateCell('')).toBe('');
+  });
+
+  it('formats Date objects in the target timezone without UTC shift', () => {
+    const d = new Date('2026-08-01T12:00:00');
+    expect(formatDateCell(d, 'America/New_York')).toBe('2026-08-01');
+  });
+
+  it('formats M/D/YYYY string dates correctly', () => {
+    expect(formatDateCell('8/1/2026')).toBe('2026-08-01');
+    expect(formatDateCell('12/31/2026')).toBe('2026-12-31');
+  });
+
+  it('formats YYYY-MM-DD string dates correctly', () => {
+    expect(formatDateCell('2026-08-01')).toBe('2026-08-01');
+  });
+
+  it('formats ISO timestamps with time component in timezone', () => {
+    expect(formatDateCell('2026-08-01T12:00:00.000Z', 'America/New_York')).toBe('2026-08-01');
   });
 });

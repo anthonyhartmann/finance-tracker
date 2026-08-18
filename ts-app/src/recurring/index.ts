@@ -5,7 +5,7 @@
 
 import * as sheetApi from '../sheet-api';
 import * as Debug from '../debug';
-import { getTimezone } from '../runtime';
+import { getTimezone, formatDateCell } from '../runtime';
 import type { RecurringItem, RecurringResult } from '../types';
 
 /** Matched transaction from the transactions tab. */
@@ -82,15 +82,11 @@ async function getTransactionData(startDate: string, endDate: string): Promise<T
   if (dateCol < 0) return [];
 
   const results: TransactionMatch[] = [];
+  const tz = getTimezone();
   for (let r = 1; r < data.length; r++) {
     const row = data[r];
     const rawDate: unknown = row[dateCol];
-    let dateStr: string;
-    if (rawDate instanceof Date) {
-      dateStr = rawDate.toISOString().substring(0, 10);
-    } else {
-      dateStr = String(rawDate || '');
-    }
+    const dateStr = formatDateCell(rawDate, tz);
     if (dateStr < startDate || dateStr > endDate) continue;
 
     results.push({

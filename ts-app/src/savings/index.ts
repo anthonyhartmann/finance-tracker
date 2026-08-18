@@ -10,7 +10,7 @@
 import * as sheetApi from '../sheet-api';
 import * as Debug from '../debug';
 import * as PLAID from '../plaid';
-import { getTimezone } from '../runtime';
+import { getTimezone, formatDateCell } from '../runtime';
 import type {
   PlaidTransaction, PlaidAccount,
   PlaidInvestmentTransaction, SavingsMonthData,
@@ -254,7 +254,7 @@ export async function backfill(startDate?: string, endDate?: string): Promise<vo
 
   for (const t of allTx) {
     const rawDate: unknown = t.date || t.authorized_date || '';
-    const dateStr = normalizeMonth(rawDate).substring(0, 7) ? (rawDate instanceof Date ? (rawDate as Date).toISOString().substring(0, 10) : String(rawDate)) : '';
+    const dateStr = formatDateCell(rawDate, tz);
     if (!dateStr || dateStr < useStart || dateStr > useEnd) continue;
     const month = dateStr.substring(0, 7);
     if (!byMonth[month]) continue;
@@ -284,7 +284,7 @@ export async function backfill(startDate?: string, endDate?: string): Promise<vo
 
   for (const inv of allInvTx) {
     const invDateRaw: unknown = inv.date || '';
-    const invDate = invDateRaw instanceof Date ? (invDateRaw as Date).toISOString().substring(0, 10) : String(invDateRaw);
+    const invDate = formatDateCell(invDateRaw, tz);
     if (!invDate || invDate < useStart || invDate > useEnd) continue;
     const invMonth = invDate.substring(0, 7);
     if (!byMonth[invMonth]) continue;
