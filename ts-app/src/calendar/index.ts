@@ -18,8 +18,7 @@ export async function parseCalendarEvents(daysBack?: number, daysForward?: numbe
   const interviews: { date: string; title: string; status: 'Past' | 'Upcoming' }[] = [];
 
   for (const e of resolved) {
-    const combined = (e.summary + ' ' + e.description).toLowerCase();
-    if (!looksLikeInterview(combined)) continue;
+    if (!looksLikeInterview(e.summary, e.description)) continue;
     const tz = getTimezone();
     const dateStr = e.startDate.toLocaleDateString('en-CA', { timeZone: tz });
     const status: 'Past' | 'Upcoming' = e.startDate < now ? 'Past' : 'Upcoming';
@@ -50,8 +49,14 @@ export async function dumpCalendarEvents(daysBack?: number, daysForward?: number
   }
 }
 
-function looksLikeInterview(text: string): boolean {
-  const keywords = ['interview', 'phone screen', 'onsite', 'loop interview', 'hiring', 'recruiter call', 'screening'];
-  for (const kw of keywords) { if (text.indexOf(kw) >= 0) return true; }
+export function looksLikeInterview(summary: string, description: string = ''): boolean {
+  const summaryTrimmed = summary.trim();
+  if (/^interview with .+ \| .+ interviews$/i.test(summaryTrimmed)) {
+    return true;
+  }
+  const combined = (summary + ' ' + description).toLowerCase();
+  if (combined.includes('interviewkickstart') || combined.includes('interview kickstart')) {
+    return true;
+  }
   return false;
 }

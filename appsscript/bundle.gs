@@ -900,6 +900,7 @@
   var calendar_exports = {};
   __export(calendar_exports, {
     dumpCalendarEvents: () => dumpCalendarEvents,
+    looksLikeInterview: () => looksLikeInterview,
     parseCalendarEvents: () => parseCalendarEvents
   });
   async function parseCalendarEvents(daysBack, daysForward) {
@@ -911,8 +912,7 @@
     const now = /* @__PURE__ */ new Date();
     const interviews = [];
     for (const e of resolved) {
-      const combined = (e.summary + " " + e.description).toLowerCase();
-      if (!looksLikeInterview(combined)) continue;
+      if (!looksLikeInterview(e.summary, e.description)) continue;
       const tz = getTimezone();
       const dateStr = e.startDate.toLocaleDateString("en-CA", { timeZone: tz });
       const status = e.startDate < now ? "Past" : "Upcoming";
@@ -938,10 +938,14 @@
       await log("Calendar.dumpCalendarEvents", dateStr + " | " + e.summary + " | " + e.description.substring(0, 60));
     }
   }
-  function looksLikeInterview(text) {
-    const keywords = ["interview", "phone screen", "onsite", "loop interview", "hiring", "recruiter call", "screening"];
-    for (const kw of keywords) {
-      if (text.indexOf(kw) >= 0) return true;
+  function looksLikeInterview(summary, description = "") {
+    const summaryTrimmed = summary.trim();
+    if (/^interview with .+ \| .+ interviews$/i.test(summaryTrimmed)) {
+      return true;
+    }
+    const combined = (summary + " " + description).toLowerCase();
+    if (combined.includes("interviewkickstart") || combined.includes("interview kickstart")) {
+      return true;
     }
     return false;
   }
