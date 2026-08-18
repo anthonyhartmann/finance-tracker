@@ -10,7 +10,7 @@ jest.mock('../config');
 import * as sheetApi from '../sheet-api';
 import * as Debug from '../debug';
 import * as RECURRING from '../recurring';
-import { calculateSpend, calculateInterviewIncome, calculateManualAdjustments } from './index';
+import { calculateSpend, calculateInterviewIncome, calculateManualAdjustments, maybeResetManualInputs } from './index';
 
 const mockSheetApi = jest.mocked(sheetApi);
 const mockDebug = jest.mocked(Debug);
@@ -243,9 +243,10 @@ describe('calculateInterviewIncome', () => {
       .mockResolvedValueOnce(customDashboard);
 
     const result = await calculateInterviewIncome('2026-07');
-    // 3 total - 1 nonstd - 1 cancel = 1 standard
-    // (1 * $85) + (1 * $115) + (1 * $75) = $275 * 0.7 = $192.50
-    expect(result).toBe(192.50);
+    // 3 calendar interviews: 1 non-standard ($115), 2 standard ($85).
+    // Late cancellation (removed from calendar) adds $75.
+    // (2 * $85) + (1 * $115) + (1 * $75) = $360 * 0.7 = $252
+    expect(result).toBe(252);
   });
 
   it('excludes upcoming interviews when Count Upcoming is 0', async () => {
@@ -269,6 +270,49 @@ describe('calculateInterviewIncome', () => {
     mockSheetApi.getValues.mockResolvedValue([]);
     const result = await calculateInterviewIncome('2026-07');
     expect(result).toBe(0);
+  });
+});
+
+describe('maybeResetManualInputs', () => {
+  const mockDashboardData = (month: string) => [
+    ['Finance Tracker Dashboard', ''],
+    ['Refresh All', ''],
+    ['Controls', ''],
+    ['Month (YYYY-MM)', month],
+    ...Array(27).fill(['', '']),
+  ];
+
+  it('does not reset manual inputs when stored month matches current month', async () => {
+    mockSheetApi.getValues.mockResolvedValue(mockDashboardData('2026-07'));
+    mockSheetApi.getCell.mockResolvedValue('2026-07');
+
+    await maybeResetManualInputs();
+
+    expect(mockSheetApi.setCell).not.toHaveBeenCalledWith('dashboard', 'B30', 0);
+    expect(mockSheetApi.setCell).not.toHaveBeenCalledWith('dashboard', 'B31', 0);
+    expect(mockSheetApi.setCell).toHaveBeenCalledWith('dashboard', 'B32', '2026-07');
+  });
+
+  it('does not reset manual inputs when stored month is a Date object for the same month', async () => {
+    mockSheetApi.getValues.mockResolvedValue(mockDashboardData('2026-07'));
+    mockSheetApi.getCell.mockResolvedValue(new Date('2026-07-01T00:00:00Z'));
+
+    await maybeResetManualInputs();
+
+    expect(mockSheetApi.setCell).not.toHaveBeenCalledWith('dashboard', 'B30', 0);
+    expect(mockSheetApi.setCell).not.toHaveBeenCalledWith('dashboard', 'B31', 0);
+    expect(mockSheetApi.setCell).toHaveBeenCalledWith('dashboard', 'B32', '2026-07');
+  });
+
+  it('resets manual inputs when month rolls over', async () => {
+    mockSheetApi.getValues.mockResolvedValue(mockDashboardData('2026-08'));
+    mockSheetApi.getCell.mockResolvedValue('2026-07');
+
+    await maybeResetManualInputs();
+
+    expect(mockSheetApi.setCell).toHaveBeenCalledWith('dashboard', 'B30', 0);
+    expect(mockSheetApi.setCell).toHaveBeenCalledWith('dashboard', 'B31', 0);
+    expect(mockSheetApi.setCell).toHaveBeenCalledWith('dashboard', 'B32', '2026-08');
   });
 });
 

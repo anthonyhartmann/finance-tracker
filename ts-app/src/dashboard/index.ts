@@ -9,6 +9,7 @@ import * as RECURRING from '../recurring';
 import * as config from '../config';
 import { getTimezone } from '../runtime';
 import type { CellValue } from '../types';
+import { normalizeMonth } from '../savings';
 
 const TAB = 'dashboard';
 
@@ -254,7 +255,7 @@ export async function calculateInterviewIncome(month: string): Promise<number> {
     count++;
   }
 
-  const standardCount = Math.max(0, count - nonStandardCount - lateCancellationCount);
+  const standardCount = Math.max(0, count - nonStandardCount);
   const gross = standardCount * standardRate + nonStandardCount * nonStandardRate + lateCancellationCount * cancellationRate;
   await Debug.log('Dashboard.calculateInterviewIncome', 'Counted ' + count + ' interviews in ' + month + ' (std=' + standardCount + ' nonstd=' + nonStandardCount + ' cancel=' + lateCancellationCount + ') gross=$' + gross + ' after tax=$' + Math.round(gross * taxScalar * 100) / 100);
   return Math.round(gross * taxScalar * 100) / 100;
@@ -305,16 +306,17 @@ export async function maybeResetManualInputs(): Promise<void> {
   const ss = await sheetApi.getValues('dashboard');
   if (!ss || ss.length < 31) return;
 
-  const storedMonth = await sheetApi.getCell('dashboard', 'B32');
-  const currentMonth = String(ss[3][1] || '').trim();
+  const rawStored = await sheetApi.getCell('dashboard', 'B32');
+  const storedMonth = normalizeMonth(rawStored);
+  const currentMonth = normalizeMonth(ss[3][1]);
 
-  if (storedMonth && String(storedMonth) !== currentMonth) {
+  if (storedMonth && currentMonth && storedMonth !== currentMonth) {
     await Debug.log('Dashboard.maybeResetManualInputs', 'Month rollover detected: ' + storedMonth + ' -> ' + currentMonth);
 
     // Snapshot before resetting
     try {
       const { autoSnapshotOnRollover } = await import('../snapshot');
-      await autoSnapshotOnRollover(String(storedMonth));
+      await autoSnapshotOnRollover(storedMonth);
     } catch (e: unknown) {
       await Debug.error('Dashboard.maybeResetManualInputs', 'Snapshot failed: ' + (e instanceof Error ? e.message : String(e)));
     }
@@ -323,7 +325,9 @@ export async function maybeResetManualInputs(): Promise<void> {
     await sheetApi.setCell('dashboard', 'B31', 0);
     await Debug.log('Dashboard.maybeResetManualInputs', 'Reset manual inputs for new month: ' + currentMonth);
   }
-  await sheetApi.setCell('dashboard', 'B32', currentMonth);
+  if (currentMonth) {
+    await sheetApi.setCell('dashboard', 'B32', currentMonth);
+  }
 }
 
 function padMonth(m: number): string {
