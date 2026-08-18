@@ -50,9 +50,10 @@ describe('calendar', () => {
       mockCalendar.events.list.mockResolvedValue({
         data: {
           items: [
-            { summary: 'Phone Screen - Google', start: { dateTime: pastDate.toISOString() }, description: 'coding interview' },
+            { summary: 'Interview with Raymond | Scalable Distributed Systems Interviews', start: { dateTime: pastDate.toISOString() }, description: '' },
+            { summary: 'onsite', start: { dateTime: futureDate.toISOString() }, description: '' },
             { summary: 'Lunch with Bob', start: { dateTime: pastDate.toISOString() }, description: '' },
-            { summary: 'Onsite - Meta', start: { dateTime: futureDate.toISOString() }, description: 'loop interview' },
+            { summary: 'Interview with Vincent | Data Structures/Algorithms Interviews', start: { dateTime: futureDate.toISOString() }, description: '' },
             { summary: 'Dentist', start: { dateTime: pastDate.toISOString() }, description: '' },
           ],
         },
@@ -64,12 +65,12 @@ describe('calendar', () => {
       expect(mockSheetApi.setValues).toHaveBeenCalledWith(
         'interview_income!A2',
         expect.arrayContaining([
-          expect.arrayContaining(['Phone Screen - Google']),
-          expect.arrayContaining(['Onsite - Meta']),
+          expect.arrayContaining(['Interview with Raymond | Scalable Distributed Systems Interviews']),
+          expect.arrayContaining(['Interview with Vincent | Data Structures/Algorithms Interviews']),
         ])
       );
 
-      // Should only have 2 interview rows (not Lunch or Dentist)
+      // Should only have 2 interview rows (not onsite, Lunch, or Dentist)
       const dataCall = mockSheetApi.setValues.mock.calls.find(c => c[0] === 'interview_income!A2');
       expect(dataCall![1]).toHaveLength(2);
     });
@@ -82,8 +83,8 @@ describe('calendar', () => {
       mockCalendar.events.list.mockResolvedValue({
         data: {
           items: [
-            { summary: 'Interview Past', start: { dateTime: pastDate.toISOString() }, description: '' },
-            { summary: 'Interview Future', start: { dateTime: futureDate.toISOString() }, description: '' },
+            { summary: 'Interview with Alice | Ad-Hoc Interviews', start: { dateTime: pastDate.toISOString() }, description: '' },
+            { summary: 'Interview with Bob | Ad-Hoc Interviews', start: { dateTime: futureDate.toISOString() }, description: '' },
           ],
         },
       });
@@ -110,13 +111,14 @@ describe('calendar', () => {
       expect(dataCall).toBeUndefined();
     });
 
-    it('detects various interview keywords', async () => {
+    it('detects side job interviews by pattern and interviewkickstart keyword', async () => {
       mockCalendar.events.list.mockResolvedValue({
         data: {
           items: [
-            { summary: 'Phone Screening Call', start: { dateTime: '2026-07-20T10:00:00Z' }, description: '' },
-            { summary: 'System Design Hiring Loop', start: { dateTime: '2026-07-21T10:00:00Z' }, description: '' },
-            { summary: 'Recruiter Call - Amazon', start: { dateTime: '2026-07-22T10:00:00Z' }, description: '' },
+            { summary: 'Interview with Sandeep | Frontend System Design Interviews', start: { dateTime: '2026-07-30T10:00:00Z' }, description: '' },
+            { summary: 'Interview with Apoorv | Product Management Interviews', start: { dateTime: '2026-08-02T10:00:00Z' }, description: '' },
+            { summary: 'Session with candidate', start: { dateTime: '2026-08-03T10:00:00Z' }, description: 'https://uplevel.interviewkickstart.com/interview/12345/' },
+            { summary: 'Random Onsite', start: { dateTime: '2026-08-24T10:00:00Z' }, description: 'Regular job interview' },
           ],
         },
       });
