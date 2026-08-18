@@ -121,7 +121,7 @@ describe('recurring edge cases', () => {
     expect(result.items).toHaveLength(0);
   });
 
-  it('matches first-token so Verizon Fios bill matches Verizon transaction', async () => {
+  it('matches token so Verizon Fios bill matches Verizon transaction', async () => {
     mockSheetApi.getValues
       .mockResolvedValueOnce([  // recurring tab
         ['merchant_name', 'amount', 'frequency', 'day_of_month', 'notes'],
@@ -133,6 +133,41 @@ describe('recurring edge cases', () => {
       ]);
 
     const result = await calculateUpcoming(2026, 7, new Date('2026-07-28'));
+    expect(result.upcoming).toBe(0);
+    expect(result.items).toHaveLength(0);
+  });
+
+  it('does not falsely match "Con Edison" with unrelated "Consolidated" transaction', async () => {
+    mockSheetApi.getValues
+      .mockResolvedValueOnce([  // recurring tab
+        ['merchant_name', 'amount', 'frequency', 'day_of_month', 'notes'],
+        ['Con Edison', 122, 'monthly', '20', 'electric'],
+      ])
+      .mockResolvedValueOnce([  // transactions tab: has "Consolidated", but NOT Con Edison
+        ['account_name', 'date', 'merchant_name', 'amount', 'transaction_id', 'account_id', 'name', 'category', 'payment_channel', 'pending', 'currency', 'synced_at'],
+        ['Checking', '2026-07-10', 'Consolidated Store', 50, 't1', 'a1', 'Consolidated Store', 'SHOPPING', 'in store', 'FALSE', 'USD', 'now'],
+      ]);
+
+    const result = await calculateUpcoming(2026, 7, new Date('2026-07-15'));
+    // Con Edison has not posted yet, so upcoming should be $122
+    expect(result.upcoming).toBe(122);
+    expect(result.items).toHaveLength(1);
+    expect(result.items[0].merchant).toBe('con edison');
+  });
+
+  it('correctly matches "Con Edison" when a real Con Edison transaction exists', async () => {
+    mockSheetApi.getValues
+      .mockResolvedValueOnce([  // recurring tab
+        ['merchant_name', 'amount', 'frequency', 'day_of_month', 'notes'],
+        ['Con Edison', 122, 'monthly', '20', 'electric'],
+      ])
+      .mockResolvedValueOnce([  // transactions tab: has actual Con Ed payment
+        ['account_name', 'date', 'merchant_name', 'amount', 'transaction_id', 'account_id', 'name', 'category', 'payment_channel', 'pending', 'currency', 'synced_at'],
+        ['Checking', '2026-07-12', 'CONED ONLINE PMT', 122, 't1', 'a1', 'CON EDISON OF NY', 'UTILITIES', 'online', 'FALSE', 'USD', 'now'],
+      ]);
+
+    const result = await calculateUpcoming(2026, 7, new Date('2026-07-15'));
+    // Con Edison posted, so upcoming should be $0
     expect(result.upcoming).toBe(0);
     expect(result.items).toHaveLength(0);
   });

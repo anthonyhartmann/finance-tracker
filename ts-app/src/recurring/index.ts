@@ -99,16 +99,74 @@ async function getTransactionData(startDate: string, endDate: string): Promise<T
 
 function countMatches(searchTerm: string, txData: TransactionMatch[]): number {
   let count = 0;
-  const term = searchTerm.toLowerCase().trim();
-  // Match on the first token so "Verizon Fios" matches a transaction
-  // whose merchant is just "Verizon" (Plaid often drops the suffix).
-  const firstToken = term.split(/\s+/)[0];
   for (const t of txData) {
-    const merchant = String(t.merchant_name || '').toLowerCase();
-    const name = String(t.name || '').toLowerCase();
-    if (merchant.indexOf(firstToken) >= 0 || name.indexOf(firstToken) >= 0) {
+    if (isMatch(searchTerm, t)) {
       count++;
     }
   }
   return count;
+}
+
+function isMatch(searchTerm: string, tx: TransactionMatch): boolean {
+  const term = searchTerm.toLowerCase().trim();
+  if (!term) return false;
+
+  const merchant = String(tx.merchant_name || '').toLowerCase().trim();
+  const name = String(tx.name || '').toLowerCase().trim();
+  const targets = [merchant, name].filter(Boolean);
+  if (targets.length === 0) return false;
+
+  // 1. Direct full substring match
+  for (const target of targets) {
+    if (target.includes(term)) return true;
+  }
+
+  // 2. Cleaned non-alphanumeric match
+  const cleanTerm = term.replace(/[^a-z0-9]/g, '');
+  if (cleanTerm.length >= 3) {
+    for (const target of targets) {
+      const cleanTarget = target.replace(/[^a-z0-9]/g, '');
+      if (cleanTarget.includes(cleanTerm)) return true;
+      if (cleanTarget.length >= 4 && cleanTerm.includes(cleanTarget)) return true;
+    }
+  }
+
+  // 3. Token-based matching
+  const tokens = term.split(/\s+/).filter(Boolean);
+  if (tokens.length === 1) {
+    const single = tokens[0];
+    const escaped = escapeRegex(single);
+    const wordRegex = new RegExp(`\\b${escaped}\\b`, 'i');
+    for (const target of targets) {
+      if (single.length >= 4 ? target.includes(single) : wordRegex.test(target)) {
+        return true;
+      }
+    }
+  } else if (tokens.length > 1) {
+    for (const target of targets) {
+      // Check if ALL tokens match as whole words or substrings
+      const allTokensMatch = tokens.every((tok) => {
+        if (tok.length >= 4) {
+          return target.includes(tok);
+        }
+        const regex = new RegExp(`\\b${escapeRegex(tok)}\\b`, 'i');
+        return regex.test(target);
+      });
+      if (allTokensMatch) return true;
+
+      // Check if any significant token (length >= 4) matches as a whole word or substring
+      const significantTokenMatch = tokens.some((tok) => {
+        if (tok.length < 4) return false;
+        const regex = new RegExp(`\\b${escapeRegex(tok)}\\b`, 'i');
+        return regex.test(target) || target.includes(tok);
+      });
+      if (significantTokenMatch) return true;
+    }
+  }
+
+  return false;
+}
+
+function escapeRegex(str: string): string {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
