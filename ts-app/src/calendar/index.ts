@@ -15,12 +15,16 @@ export async function parseCalendarEvents(daysBack?: number, daysForward?: numbe
   await Debug.log('Calendar.parseCalendarEvents', 'Scanning ' + resolved.length + ' events');
 
   const now = new Date();
+  const tz = getTimezone();
+  const currentMonthStr = now.toLocaleDateString('en-CA', { timeZone: tz }).substring(0, 7);
+  const minDate = currentMonthStr + '-01';
+
   const interviews: { date: string; title: string; status: 'Past' | 'Upcoming' }[] = [];
 
   for (const e of resolved) {
     if (!looksLikeInterview(e.summary, e.description)) continue;
-    const tz = getTimezone();
     const dateStr = e.startDate.toLocaleDateString('en-CA', { timeZone: tz });
+    if (dateStr < minDate) continue;
     const status: 'Past' | 'Upcoming' = e.startDate < now ? 'Past' : 'Upcoming';
     interviews.push({ date: dateStr, title: e.summary, status });
   }

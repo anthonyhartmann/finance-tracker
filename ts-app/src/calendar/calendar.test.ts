@@ -115,7 +115,7 @@ describe('calendar', () => {
       mockCalendar.events.list.mockResolvedValue({
         data: {
           items: [
-            { summary: 'Interview with Sandeep | Frontend System Design Interviews', start: { dateTime: '2026-07-30T10:00:00Z' }, description: '' },
+            { summary: 'Interview with Sandeep | Frontend System Design Interviews', start: { dateTime: '2026-08-01T10:00:00Z' }, description: '' },
             { summary: 'Interview with Apoorv | Product Management Interviews', start: { dateTime: '2026-08-02T10:00:00Z' }, description: '' },
             { summary: 'Session with candidate', start: { dateTime: '2026-08-03T10:00:00Z' }, description: 'https://uplevel.interviewkickstart.com/interview/12345/' },
             { summary: 'Random Onsite', start: { dateTime: '2026-08-24T10:00:00Z' }, description: 'Regular job interview' },

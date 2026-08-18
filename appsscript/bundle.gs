@@ -268,6 +268,31 @@
     }
     return "America/New_York";
   }
+  function formatDateCell(rawDate, tz) {
+    if (!rawDate) return "";
+    const zone = tz || getTimezone();
+    if (rawDate instanceof Date) {
+      return rawDate.toLocaleDateString("en-CA", { timeZone: zone });
+    }
+    const s = String(rawDate).trim();
+    if (/^\d{4}-\d{2}-\d{2}/.test(s)) {
+      if (s.includes("T")) {
+        const d = new Date(s);
+        if (!isNaN(d.getTime())) {
+          return d.toLocaleDateString("en-CA", { timeZone: zone });
+        }
+      }
+      return s.substring(0, 10);
+    }
+    const m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+    if (m) {
+      const mo = Number(m[1]);
+      const da = Number(m[2]);
+      const y = m[3];
+      return y + "-" + (mo < 10 ? "0" + mo : String(mo)) + "-" + (da < 10 ? "0" + da : String(da));
+    }
+    return s;
+  }
   var init_runtime = __esm({
     "src/runtime.ts"() {
       "use strict";
@@ -603,240 +628,6 @@
     }
   });
 
-  // src/sheet-ops/index.ts
-  async function writeTransactions(syncResult) {
-    const tabName = "transactions";
-    await ensureTab(tabName, HEADERS);
-    let added = [];
-    let modified = [];
-    let removed = [];
-    if (Array.isArray(syncResult)) {
-      added = syncResult;
-    } else if (syncResult) {
-      added = syncResult.added || [];
-      modified = syncResult.modified || [];
-      removed = syncResult.removed || [];
-    }
-    const data = await getValues(tabName);
-    const byId = {};
-    const order = [];
-    if (data.length > 1) {
-      const oldHeader = data[0].map((h) => String(h));
-      const idCol = oldHeader.indexOf("transaction_id");
-      const effectiveIdCol = idCol < 0 ? 0 : idCol;
-      for (let r = 1; r < data.length; r++) {
-        const id = String(data[r][effectiveIdCol] || "");
-        if (!id) continue;
-        const lowerKey = id.toLowerCase();
-        const obj = {};
-        for (let c = 0; c < oldHeader.length; c++) {
-          if (oldHeader[c]) obj[oldHeader[c]] = data[r][c];
-        }
-        byId[lowerKey] = obj;
-        order.push(lowerKey);
-      }
-    }
-    const needIds = [];
-    function collect(id) {
-      if (id && !needIds.includes(id)) needIds.push(String(id));
-    }
-    for (const t of added) collect(t.account_id);
-    for (const t of modified) collect(t.account_id);
-    for (const oid in byId) {
-      if (!byId[oid].account_name) collect(byId[oid].account_id);
-    }
-    const acctNames = needIds.length > 0 ? await getAccountNames(needIds) : {};
-    const now = (/* @__PURE__ */ new Date()).toISOString();
-    function toRow(t) {
-      return [
-        t.account_name || acctNames[String(t.account_id)] || "",
-        t.authorized_date || t.date || "",
-        t.merchant_name || "",
-        t.amount,
-        t.transaction_id,
-        t.account_id,
-        t.name || "",
-        typeof t.category === "string" ? t.category : t.personal_finance_category ? t.personal_finance_category.primary : "",
-        t.payment_channel || "",
-        t.pending === true || t.pending === "TRUE" ? "TRUE" : "FALSE",
-        t.currency || t.iso_currency_code || "USD",
-        t.synced_at || now
-      ];
-    }
-    let addedCount = 0, updatedCount = 0, removedCount = 0, dupeCount = 0;
-    for (const t of removed) {
-      const rid = String(t.transaction_id || "").toLowerCase();
-      if (byId[rid]) {
-        delete byId[rid];
-        removedCount++;
-      }
-    }
-    for (const t of modified) {
-      const mid = String(t.transaction_id || "").toLowerCase();
-      if (byId[mid]) {
-        byId[mid] = t;
-        updatedCount++;
-      } else {
-        byId[mid] = t;
-        order.push(mid);
-        addedCount++;
-      }
-    }
-    for (const t of added) {
-      const aid = String(t.transaction_id || "").toLowerCase();
-      if (byId[aid]) {
-        dupeCount++;
-        continue;
-      }
-      byId[aid] = t;
-      order.push(aid);
-      addedCount++;
-    }
-    const out = [];
-    for (const k of order) {
-      if (byId[k]) out.push(toRow(byId[k]));
-    }
-    await clearTab(tabName, true);
-    await setValues(`${tabName}!A1`, [HEADERS]);
-    if (out.length > 0) {
-      await setValues(`${tabName}!A2`, out);
-    }
-    await log("SheetOps.writeTransactions", "Added: " + addedCount + ", Updated: " + updatedCount + ", Removed: " + removedCount + ", Dupes skipped: " + dupeCount + ", Total rows: " + out.length);
-  }
-  async function writeBalances(balances) {
-    const tabName = "dashboard";
-    let total = 0;
-    for (const b of balances) {
-      const bal = (b.available !== null ? b.available : b.current) ?? 0;
-      if (b.type === "credit") {
-        total -= bal;
-      } else {
-        total += bal;
-      }
-    }
-    try {
-      await setCell(tabName, "B1", total);
-      await log("SheetOps.writeBalances", "Total available balance: " + total);
-    } catch {
-      await log("SheetOps.writeBalances", "Dashboard tab not found, skipping balance write");
-    }
-  }
-  var HEADERS;
-  var init_sheet_ops = __esm({
-    "src/sheet-ops/index.ts"() {
-      "use strict";
-      init_sheet_api();
-      init_debug();
-      init_plaid();
-      HEADERS = [
-        "account_name",
-        "date",
-        "merchant_name",
-        "amount",
-        "transaction_id",
-        "account_id",
-        "name",
-        "category",
-        "payment_channel",
-        "pending",
-        "currency",
-        "synced_at"
-      ];
-    }
-  });
-
-  // src/recurring/index.ts
-  async function calculateUpcoming(year, monthNum, _today) {
-    const data = await getValues(TAB);
-    if (!data || data.length < 2) return { upcoming: 0, items: [] };
-    const header = data[0].map((h) => String(h));
-    const merchCol = header.indexOf("merchant_name");
-    const amtCol = header.indexOf("amount");
-    const freqCol = header.indexOf("frequency");
-    if (merchCol < 0 || amtCol < 0 || freqCol < 0) {
-      await error("Recurring.calculateUpcoming", "recurring tab missing required columns");
-      return { upcoming: 0, items: [] };
-    }
-    const tz = getTimezone();
-    const monthStart = new Date(year, monthNum - 1, 1).toLocaleDateString("en-CA", { timeZone: tz });
-    const monthEnd = new Date(year, monthNum, 0).toLocaleDateString("en-CA", { timeZone: tz });
-    const txData = await getTransactionData(monthStart, monthEnd);
-    let upcomingTotal = 0;
-    const upcomingItems = [];
-    for (let r = 1; r < data.length; r++) {
-      const row = data[r];
-      const merchant = String(row[merchCol] || "").toLowerCase().trim();
-      const amount = Number(row[amtCol]) || 0;
-      const frequency = String(row[freqCol] || "").toLowerCase().trim();
-      if (!merchant || amount <= 0) continue;
-      const postedCount = countMatches(merchant, txData);
-      const expectedCount = frequency === "weekly" ? 4 : 1;
-      const remainingCount = Math.max(0, expectedCount - postedCount);
-      const upcomingAmount = Math.round(remainingCount * amount * 100) / 100;
-      if (upcomingAmount > 0) {
-        upcomingTotal += upcomingAmount;
-        upcomingItems.push({
-          merchant,
-          amount,
-          frequency,
-          remaining: remainingCount,
-          upcomingAmount
-        });
-      }
-    }
-    await log("Recurring.calculateUpcoming", "Upcoming: $" + upcomingTotal + " from " + upcomingItems.length + " bill(s)");
-    return { upcoming: upcomingTotal, items: upcomingItems };
-  }
-  async function getTransactionData(startDate, endDate) {
-    const data = await getValues("transactions");
-    if (!data || data.length < 2) return [];
-    const header = data[0].map((h) => String(h));
-    const dateCol = header.indexOf("date");
-    const merchCol = header.indexOf("merchant_name");
-    const nameCol = header.indexOf("name");
-    if (dateCol < 0) return [];
-    const results = [];
-    for (let r = 1; r < data.length; r++) {
-      const row = data[r];
-      const rawDate = row[dateCol];
-      let dateStr;
-      if (rawDate instanceof Date) {
-        dateStr = rawDate.toISOString().substring(0, 10);
-      } else {
-        dateStr = String(rawDate || "");
-      }
-      if (dateStr < startDate || dateStr > endDate) continue;
-      results.push({
-        merchant_name: String(row[merchCol] || ""),
-        name: String(row[nameCol] || "")
-      });
-    }
-    return results;
-  }
-  function countMatches(searchTerm, txData) {
-    let count = 0;
-    const term = searchTerm.toLowerCase().trim();
-    const firstToken = term.split(/\s+/)[0];
-    for (const t of txData) {
-      const merchant = String(t.merchant_name || "").toLowerCase();
-      const name = String(t.name || "").toLowerCase();
-      if (merchant.indexOf(firstToken) >= 0 || name.indexOf(firstToken) >= 0) {
-        count++;
-      }
-    }
-    return count;
-  }
-  var TAB;
-  var init_recurring = __esm({
-    "src/recurring/index.ts"() {
-      "use strict";
-      init_sheet_api();
-      init_debug();
-      init_runtime();
-      TAB = "recurring";
-    }
-  });
-
   // src/savings/index.ts
   var savings_exports = {};
   __export(savings_exports, {
@@ -853,12 +644,12 @@
     writeSheet: () => writeSheet
   });
   async function ensureTab3() {
-    await ensureTab(TAB2, HEADERS2);
+    await ensureTab(TAB, HEADERS);
   }
   async function readExisting() {
     const existing = {};
     try {
-      const data = await getValues(TAB2);
+      const data = await getValues(TAB);
       for (let i = 1; i < data.length; i++) {
         const month = String(data[i][0] || "").trim();
         if (!month) continue;
@@ -975,7 +766,7 @@
   async function writeSheet(byMonth) {
     let existingRows = [];
     try {
-      const existing = await getValues(TAB2);
+      const existing = await getValues(TAB);
       if (existing && existing.length > 1) {
         existingRows = existing.slice(1);
       }
@@ -1004,10 +795,10 @@
       const formula = "=C" + rowNum + "+D" + rowNum + "-E" + rowNum + "+F" + rowNum + "+G" + rowNum + "-H" + rowNum;
       rows.push([row[0], formula, row[2], row[3], row[4], row[5], row[6], row[7], row[8]]);
     }
-    await clearTab(TAB2, false);
-    await setValues(TAB2 + "!A1", [HEADERS2]);
+    await clearTab(TAB, false);
+    await setValues(TAB + "!A1", [HEADERS]);
     if (rows.length > 0) {
-      await setValues(TAB2 + "!A2", rows);
+      await setValues(TAB + "!A2", rows);
     }
     await log("Savings.writeSheet", "Wrote " + rows.length + " row(s) (" + sortedMonths.length + " total months, " + updatedMonths.length + " updated)");
   }
@@ -1026,7 +817,7 @@
     await log("Savings.backfill", "Fetched " + allTx.length + " bank tx, " + allInvTx.length + " investment tx");
     for (const t of allTx) {
       const rawDate = t.date || t.authorized_date || "";
-      const dateStr = normalizeMonth(rawDate).substring(0, 7) ? rawDate instanceof Date ? rawDate.toISOString().substring(0, 10) : String(rawDate) : "";
+      const dateStr = formatDateCell(rawDate, tz);
       if (!dateStr || dateStr < useStart || dateStr > useEnd) continue;
       const month = dateStr.substring(0, 7);
       if (!byMonth[month]) continue;
@@ -1051,7 +842,7 @@
     }
     for (const inv of allInvTx) {
       const invDateRaw = inv.date || "";
-      const invDate = invDateRaw instanceof Date ? invDateRaw.toISOString().substring(0, 10) : String(invDateRaw);
+      const invDate = formatDateCell(invDateRaw, tz);
       if (!invDate || invDate < useStart || invDate > useEnd) continue;
       const invMonth = invDate.substring(0, 7);
       if (!byMonth[invMonth]) continue;
@@ -1069,7 +860,7 @@
     await populateManualAdjustments();
   }
   async function populateManualAdjustments() {
-    const data = await getValues(TAB2);
+    const data = await getValues(TAB);
     if (!data || data.length < 2) {
       await error("populateManualAdjustments", "savings_tracker tab not found");
       return;
@@ -1087,16 +878,16 @@
       const rawMonth = normalizeMonth(data[row][0]);
       if (manual[rawMonth]) {
         const rowNum = row + 1;
-        await setCell(TAB2, "F" + rowNum, manual[rawMonth].transfers);
-        await setCell(TAB2, "G" + rowNum, manual[rawMonth].retirement);
-        await setCell(TAB2, "H" + rowNum, manual[rawMonth].ally);
+        await setCell(TAB, "F" + rowNum, manual[rawMonth].transfers);
+        await setCell(TAB, "G" + rowNum, manual[rawMonth].retirement);
+        await setCell(TAB, "H" + rowNum, manual[rawMonth].ally);
         await log("populateManualAdjustments", "Set manual values for " + rawMonth);
         updated++;
       }
     }
     await log("populateManualAdjustments", "Updated " + updated + " row(s).");
   }
-  var TAB2, HEADERS2, BANK_ITEMS, EXCLUDE_KEYWORDS;
+  var TAB, HEADERS, BANK_ITEMS, EXCLUDE_KEYWORDS;
   var init_savings = __esm({
     "src/savings/index.ts"() {
       "use strict";
@@ -1104,8 +895,8 @@
       init_debug();
       init_plaid();
       init_runtime();
-      TAB2 = "savings_tracker";
-      HEADERS2 = [
+      TAB = "savings_tracker";
+      HEADERS = [
         "month",
         "net_savings",
         "transfers_auto",
@@ -1118,6 +909,278 @@
       ];
       BANK_ITEMS = ["ally", "bofa", "fidelity"];
       EXCLUDE_KEYWORDS = ["venmo", "zelle", "cash app", "paypal", "cashapp", "atm", "withdrawal", "withdrwl"];
+    }
+  });
+
+  // src/sheet-ops/index.ts
+  async function writeTransactions(syncResult) {
+    const tabName = "transactions";
+    await ensureTab(tabName, HEADERS2);
+    let added = [];
+    let modified = [];
+    let removed = [];
+    if (Array.isArray(syncResult)) {
+      added = syncResult;
+    } else if (syncResult) {
+      added = syncResult.added || [];
+      modified = syncResult.modified || [];
+      removed = syncResult.removed || [];
+    }
+    const data = await getValues(tabName);
+    const byId = {};
+    const order = [];
+    if (data.length > 1) {
+      const oldHeader = data[0].map((h) => String(h));
+      const idCol = oldHeader.indexOf("transaction_id");
+      const effectiveIdCol = idCol < 0 ? 0 : idCol;
+      for (let r = 1; r < data.length; r++) {
+        const id = String(data[r][effectiveIdCol] || "");
+        if (!id) continue;
+        const lowerKey = id.toLowerCase();
+        const obj = {};
+        for (let c = 0; c < oldHeader.length; c++) {
+          if (oldHeader[c]) obj[oldHeader[c]] = data[r][c];
+        }
+        byId[lowerKey] = obj;
+        order.push(lowerKey);
+      }
+    }
+    const needIds = [];
+    function collect(id) {
+      if (id && !needIds.includes(id)) needIds.push(String(id));
+    }
+    for (const t of added) collect(t.account_id);
+    for (const t of modified) collect(t.account_id);
+    for (const oid in byId) {
+      if (!byId[oid].account_name) collect(byId[oid].account_id);
+    }
+    const acctNames = needIds.length > 0 ? await getAccountNames(needIds) : {};
+    const now = (/* @__PURE__ */ new Date()).toISOString();
+    function toRow(t) {
+      return [
+        t.account_name || acctNames[String(t.account_id)] || "",
+        t.authorized_date || t.date || "",
+        t.merchant_name || "",
+        t.amount,
+        t.transaction_id,
+        t.account_id,
+        t.name || "",
+        typeof t.category === "string" ? t.category : t.personal_finance_category ? t.personal_finance_category.primary : "",
+        t.payment_channel || "",
+        t.pending === true || t.pending === "TRUE" ? "TRUE" : "FALSE",
+        t.currency || t.iso_currency_code || "USD",
+        t.synced_at || now
+      ];
+    }
+    let addedCount = 0, updatedCount = 0, removedCount = 0, dupeCount = 0;
+    for (const t of removed) {
+      const rid = String(t.transaction_id || "").toLowerCase();
+      if (byId[rid]) {
+        delete byId[rid];
+        removedCount++;
+      }
+    }
+    for (const t of modified) {
+      const mid = String(t.transaction_id || "").toLowerCase();
+      if (byId[mid]) {
+        byId[mid] = t;
+        updatedCount++;
+      } else {
+        byId[mid] = t;
+        order.push(mid);
+        addedCount++;
+      }
+    }
+    for (const t of added) {
+      const aid = String(t.transaction_id || "").toLowerCase();
+      if (byId[aid]) {
+        dupeCount++;
+        continue;
+      }
+      byId[aid] = t;
+      order.push(aid);
+      addedCount++;
+    }
+    const out = [];
+    for (const k of order) {
+      if (byId[k]) out.push(toRow(byId[k]));
+    }
+    await clearTab(tabName, true);
+    await setValues(`${tabName}!A1`, [HEADERS2]);
+    if (out.length > 0) {
+      await setValues(`${tabName}!A2`, out);
+    }
+    await log("SheetOps.writeTransactions", "Added: " + addedCount + ", Updated: " + updatedCount + ", Removed: " + removedCount + ", Dupes skipped: " + dupeCount + ", Total rows: " + out.length);
+  }
+  async function writeBalances(balances) {
+    const tabName = "dashboard";
+    let total = 0;
+    for (const b of balances) {
+      const bal = (b.available !== null ? b.available : b.current) ?? 0;
+      if (b.type === "credit") {
+        total -= bal;
+      } else {
+        total += bal;
+      }
+    }
+    try {
+      await setCell(tabName, "B1", total);
+      await log("SheetOps.writeBalances", "Total available balance: " + total);
+    } catch {
+      await log("SheetOps.writeBalances", "Dashboard tab not found, skipping balance write");
+    }
+  }
+  async function pruneOldData(currentMonth) {
+    const normalizedMonth = normalizeMonth(currentMonth);
+    if (!normalizedMonth) return {};
+    const minDate = normalizedMonth + "-01";
+    const tabsToPrune = ["transactions", "interview_income", "adjustments"];
+    const tz = getTimezone();
+    const prunedCounts = {};
+    for (const tab of tabsToPrune) {
+      try {
+        const data = await getValues(tab);
+        if (!data || data.length < 2) continue;
+        const header = data[0].map((h) => String(h));
+        const dateCol = header.indexOf("date");
+        if (dateCol < 0) continue;
+        const keptRows = [];
+        let prunedCount = 0;
+        for (let r = 1; r < data.length; r++) {
+          const row = data[r];
+          const rawDate = row[dateCol];
+          const dateStr = formatDateCell(rawDate, tz);
+          if (!dateStr || dateStr < minDate) {
+            prunedCount++;
+          } else {
+            keptRows.push(row);
+          }
+        }
+        if (prunedCount > 0) {
+          await clearTab(tab, true);
+          if (keptRows.length > 0) {
+            await setValues(`${tab}!A2`, keptRows);
+          }
+          await log("SheetOps.pruneOldData", "Pruned " + prunedCount + " old row(s) from " + tab + " (kept " + keptRows.length + ")");
+        }
+        prunedCounts[tab] = prunedCount;
+      } catch (e) {
+        await error("SheetOps.pruneOldData", "Failed to prune tab " + tab + ": " + (e instanceof Error ? e.message : String(e)));
+      }
+    }
+    return prunedCounts;
+  }
+  var HEADERS2;
+  var init_sheet_ops = __esm({
+    "src/sheet-ops/index.ts"() {
+      "use strict";
+      init_sheet_api();
+      init_debug();
+      init_plaid();
+      init_runtime();
+      init_savings();
+      HEADERS2 = [
+        "account_name",
+        "date",
+        "merchant_name",
+        "amount",
+        "transaction_id",
+        "account_id",
+        "name",
+        "category",
+        "payment_channel",
+        "pending",
+        "currency",
+        "synced_at"
+      ];
+    }
+  });
+
+  // src/recurring/index.ts
+  async function calculateUpcoming(year, monthNum, _today) {
+    const data = await getValues(TAB2);
+    if (!data || data.length < 2) return { upcoming: 0, items: [] };
+    const header = data[0].map((h) => String(h));
+    const merchCol = header.indexOf("merchant_name");
+    const amtCol = header.indexOf("amount");
+    const freqCol = header.indexOf("frequency");
+    if (merchCol < 0 || amtCol < 0 || freqCol < 0) {
+      await error("Recurring.calculateUpcoming", "recurring tab missing required columns");
+      return { upcoming: 0, items: [] };
+    }
+    const tz = getTimezone();
+    const monthStart = new Date(year, monthNum - 1, 1).toLocaleDateString("en-CA", { timeZone: tz });
+    const monthEnd = new Date(year, monthNum, 0).toLocaleDateString("en-CA", { timeZone: tz });
+    const txData = await getTransactionData(monthStart, monthEnd);
+    let upcomingTotal = 0;
+    const upcomingItems = [];
+    for (let r = 1; r < data.length; r++) {
+      const row = data[r];
+      const merchant = String(row[merchCol] || "").toLowerCase().trim();
+      const amount = Number(row[amtCol]) || 0;
+      const frequency = String(row[freqCol] || "").toLowerCase().trim();
+      if (!merchant || amount <= 0) continue;
+      const postedCount = countMatches(merchant, txData);
+      const expectedCount = frequency === "weekly" ? 4 : 1;
+      const remainingCount = Math.max(0, expectedCount - postedCount);
+      const upcomingAmount = Math.round(remainingCount * amount * 100) / 100;
+      if (upcomingAmount > 0) {
+        upcomingTotal += upcomingAmount;
+        upcomingItems.push({
+          merchant,
+          amount,
+          frequency,
+          remaining: remainingCount,
+          upcomingAmount
+        });
+      }
+    }
+    await log("Recurring.calculateUpcoming", "Upcoming: $" + upcomingTotal + " from " + upcomingItems.length + " bill(s)");
+    return { upcoming: upcomingTotal, items: upcomingItems };
+  }
+  async function getTransactionData(startDate, endDate) {
+    const data = await getValues("transactions");
+    if (!data || data.length < 2) return [];
+    const header = data[0].map((h) => String(h));
+    const dateCol = header.indexOf("date");
+    const merchCol = header.indexOf("merchant_name");
+    const nameCol = header.indexOf("name");
+    if (dateCol < 0) return [];
+    const results = [];
+    const tz = getTimezone();
+    for (let r = 1; r < data.length; r++) {
+      const row = data[r];
+      const rawDate = row[dateCol];
+      const dateStr = formatDateCell(rawDate, tz);
+      if (dateStr < startDate || dateStr > endDate) continue;
+      results.push({
+        merchant_name: String(row[merchCol] || ""),
+        name: String(row[nameCol] || "")
+      });
+    }
+    return results;
+  }
+  function countMatches(searchTerm, txData) {
+    let count = 0;
+    const term = searchTerm.toLowerCase().trim();
+    const firstToken = term.split(/\s+/)[0];
+    for (const t of txData) {
+      const merchant = String(t.merchant_name || "").toLowerCase();
+      const name = String(t.name || "").toLowerCase();
+      if (merchant.indexOf(firstToken) >= 0 || name.indexOf(firstToken) >= 0) {
+        count++;
+      }
+    }
+    return count;
+  }
+  var TAB2;
+  var init_recurring = __esm({
+    "src/recurring/index.ts"() {
+      "use strict";
+      init_sheet_api();
+      init_debug();
+      init_runtime();
+      TAB2 = "recurring";
     }
   });
 
@@ -1194,11 +1257,14 @@
     const resolved = events instanceof Promise ? await events : events;
     await log("Calendar.parseCalendarEvents", "Scanning " + resolved.length + " events");
     const now = /* @__PURE__ */ new Date();
+    const tz = getTimezone();
+    const currentMonthStr = now.toLocaleDateString("en-CA", { timeZone: tz }).substring(0, 7);
+    const minDate = currentMonthStr + "-01";
     const interviews = [];
     for (const e of resolved) {
       if (!looksLikeInterview(e.summary, e.description)) continue;
-      const tz = getTimezone();
       const dateStr = e.startDate.toLocaleDateString("en-CA", { timeZone: tz });
+      if (dateStr < minDate) continue;
       const status = e.startDate < now ? "Past" : "Upcoming";
       interviews.push({ date: dateStr, title: e.summary, status });
     }
@@ -1312,6 +1378,11 @@
     const parts = month.split("-");
     const year = Number(parts[0]);
     const monthNum = Number(parts[1]);
+    try {
+      await pruneOldData(month);
+    } catch (e) {
+      await error("Dashboard.refresh", "Pruning failed: " + (e instanceof Error ? e.message : String(e)));
+    }
     const today = /* @__PURE__ */ new Date();
     const startOfMonth = year + "-" + padMonth(monthNum) + "-01";
     const endOfMonth = year + "-" + padMonth(monthNum) + "-" + daysInMonth(year, monthNum);
@@ -1368,6 +1439,7 @@
     let skippedDupe = 0;
     const seenTxIds = /* @__PURE__ */ new Set();
     const OWN_ACCOUNT_KEYWORDS = ["brokerage", "pershing", "fidelity", "401k", "ally", "savings", "checking"];
+    const tz = getTimezone();
     for (let r = 1; r < tx.length; r++) {
       const row = tx[r];
       if (txIdCol >= 0) {
@@ -1382,12 +1454,7 @@
         }
       }
       const rawDate = row[dateCol];
-      let dateStr;
-      if (rawDate instanceof Date) {
-        dateStr = rawDate.toISOString().substring(0, 10);
-      } else {
-        dateStr = String(rawDate || "");
-      }
+      const dateStr = formatDateCell(rawDate, tz);
       if (dateStr < startDate || dateStr > endDate) {
         skippedDate++;
         continue;
@@ -1436,15 +1503,11 @@
     const lateCancellationCount = Number(dash[30][1] || 0);
     await log("Dashboard.calculateInterviewIncome", "Calculating for month=" + month + " total interviews=" + (sheet.length - 1) + " rates: std=" + standardRate + " nonstd=" + nonStandardRate + " cancel=" + cancellationRate + " tax=" + taxScalar);
     let count = 0;
+    const tz = getTimezone();
     for (let r = 1; r < sheet.length; r++) {
       const row = sheet[r];
       const rawDate = row[dateCol];
-      let dateStr;
-      if (rawDate instanceof Date) {
-        dateStr = rawDate.toISOString().substring(0, 10);
-      } else {
-        dateStr = String(rawDate || "");
-      }
+      const dateStr = formatDateCell(rawDate, tz);
       if (!dateStr.startsWith(month)) continue;
       const status = String(row[statusCol] || "");
       if (status === "Upcoming" && !countUpcoming) continue;
@@ -1472,15 +1535,11 @@
     let total = 0;
     let count = 0;
     let skipped = 0;
+    const tz = getTimezone();
     for (let r = 1; r < sheet.length; r++) {
       const row = sheet[r];
       const rawDate = row[dateCol];
-      let dateStr;
-      if (rawDate instanceof Date) {
-        dateStr = rawDate.toISOString().substring(0, 10);
-      } else {
-        dateStr = String(rawDate || "");
-      }
+      const dateStr = formatDateCell(rawDate, tz);
       if (!dateStr || dateStr < startDate || dateStr > endDate) {
         skipped++;
         continue;
@@ -1580,6 +1639,7 @@
       init_config();
       init_runtime();
       init_savings();
+      init_sheet_ops();
       TAB4 = "dashboard";
     }
   });

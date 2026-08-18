@@ -6,6 +6,8 @@
 import * as sheetApi from '../sheet-api';
 import * as Debug from '../debug';
 import * as PLAID from '../plaid';
+import { getTimezone, formatDateCell } from '../runtime';
+import { normalizeMonth } from '../savings';
 import type { SyncResult, PlaidTransaction, PlaidBalance, CellValue } from '../types';
 
 const HEADERS = [
@@ -150,4 +152,56 @@ export async function writeBalances(balances: PlaidBalance[]): Promise<void> {
   } catch {
     await Debug.log('SheetOps.writeBalances', 'Dashboard tab not found, skipping balance write');
   }
+}
+
+/**
+ * Prunes data rows prior to currentMonth start (YYYY-MM-01) from transactions, interview_income, and adjustments tabs.
+ */
+export async function pruneOldData(currentMonth: string): Promise<Record<string, number>> {
+  const normalizedMonth = normalizeMonth(currentMonth);
+  if (!normalizedMonth) return {};
+
+  const minDate = normalizedMonth + '-01';
+  const tabsToPrune = ['transactions', 'interview_income', 'adjustments'];
+  const tz = getTimezone();
+  const prunedCounts: Record<string, number> = {};
+
+  for (const tab of tabsToPrune) {
+    try {
+      const data = await sheetApi.getValues(tab);
+      if (!data || data.length < 2) continue;
+
+      const header = data[0].map((h) => String(h));
+      const dateCol = header.indexOf('date');
+      if (dateCol < 0) continue;
+
+      const keptRows: CellValue[][] = [];
+      let prunedCount = 0;
+
+      for (let r = 1; r < data.length; r++) {
+        const row = data[r];
+        const rawDate = row[dateCol];
+        const dateStr = formatDateCell(rawDate, tz);
+
+        if (!dateStr || dateStr < minDate) {
+          prunedCount++;
+        } else {
+          keptRows.push(row);
+        }
+      }
+
+      if (prunedCount > 0) {
+        await sheetApi.clearTab(tab, true);
+        if (keptRows.length > 0) {
+          await sheetApi.setValues(`${tab}!A2`, keptRows);
+        }
+        await Debug.log('SheetOps.pruneOldData', 'Pruned ' + prunedCount + ' old row(s) from ' + tab + ' (kept ' + keptRows.length + ')');
+      }
+      prunedCounts[tab] = prunedCount;
+    } catch (e: unknown) {
+      await Debug.error('SheetOps.pruneOldData', 'Failed to prune tab ' + tab + ': ' + (e instanceof Error ? e.message : String(e)));
+    }
+  }
+
+  return prunedCounts;
 }

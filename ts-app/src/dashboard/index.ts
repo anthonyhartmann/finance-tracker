@@ -7,9 +7,10 @@ import * as sheetApi from '../sheet-api';
 import * as Debug from '../debug';
 import * as RECURRING from '../recurring';
 import * as config from '../config';
-import { getTimezone } from '../runtime';
+import { getTimezone, formatDateCell } from '../runtime';
 import type { CellValue } from '../types';
 import { normalizeMonth } from '../savings';
+import { pruneOldData } from '../sheet-ops';
 
 const TAB = 'dashboard';
 
@@ -86,6 +87,12 @@ export async function refresh(): Promise<void> {
   const year = Number(parts[0]);
   const monthNum = Number(parts[1]);
 
+  try {
+    await pruneOldData(month);
+  } catch (e: unknown) {
+    await Debug.error('Dashboard.refresh', 'Pruning failed: ' + (e instanceof Error ? e.message : String(e)));
+  }
+
   const today = new Date();
   const startOfMonth = year + '-' + padMonth(monthNum) + '-01';
   const endOfMonth = year + '-' + padMonth(monthNum) + '-' + daysInMonth(year, monthNum);
@@ -158,6 +165,7 @@ export async function calculateSpend(startDate: string, endDate: string): Promis
   const seenTxIds = new Set<string>();
   const OWN_ACCOUNT_KEYWORDS = ['brokerage', 'pershing', 'fidelity', '401k', 'ally', 'savings', 'checking'];
 
+  const tz = getTimezone();
   for (let r = 1; r < tx.length; r++) {
     const row = tx[r];
 
@@ -174,13 +182,7 @@ export async function calculateSpend(startDate: string, endDate: string): Promis
     }
 
     const rawDate: unknown = row[dateCol];
-    // Handle both string dates and Date objects from GAS
-    let dateStr: string;
-    if (rawDate instanceof Date) {
-      dateStr = rawDate.toISOString().substring(0, 10);
-    } else {
-      dateStr = String(rawDate || '');
-    }
+    const dateStr = formatDateCell(rawDate, tz);
     if (dateStr < startDate || dateStr > endDate) {
       skippedDate++;
       continue;
@@ -240,15 +242,11 @@ export async function calculateInterviewIncome(month: string): Promise<number> {
   await Debug.log('Dashboard.calculateInterviewIncome', 'Calculating for month=' + month + ' total interviews=' + (sheet.length - 1) + ' rates: std=' + standardRate + ' nonstd=' + nonStandardRate + ' cancel=' + cancellationRate + ' tax=' + taxScalar);
 
   let count = 0;
+  const tz = getTimezone();
   for (let r = 1; r < sheet.length; r++) {
     const row = sheet[r];
     const rawDate: unknown = row[dateCol];
-    let dateStr: string;
-    if (rawDate instanceof Date) {
-      dateStr = rawDate.toISOString().substring(0, 10);
-    } else {
-      dateStr = String(rawDate || '');
-    }
+    const dateStr = formatDateCell(rawDate, tz);
     if (!dateStr.startsWith(month)) continue;
     const status = String(row[statusCol] || '');
     if (status === 'Upcoming' && !countUpcoming) continue;
@@ -281,15 +279,11 @@ export async function calculateManualAdjustments(startDate: string, endDate: str
   let total = 0;
   let count = 0;
   let skipped = 0;
+  const tz = getTimezone();
   for (let r = 1; r < sheet.length; r++) {
     const row = sheet[r];
     const rawDate: unknown = row[dateCol];
-    let dateStr: string;
-    if (rawDate instanceof Date) {
-      dateStr = rawDate.toISOString().substring(0, 10);
-    } else {
-      dateStr = String(rawDate || '');
-    }
+    const dateStr = formatDateCell(rawDate, tz);
     if (!dateStr || dateStr < startDate || dateStr > endDate) {
       skipped++;
       continue;
