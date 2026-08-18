@@ -837,130 +837,6 @@
     }
   });
 
-  // src/snapshot/index.ts
-  var snapshot_exports = {};
-  __export(snapshot_exports, {
-    autoSnapshotOnRollover: () => autoSnapshotOnRollover,
-    snapshotCurrentMonth: () => snapshotCurrentMonth,
-    snapshotMonth: () => snapshotMonth
-  });
-  async function snapshotMonth(month) {
-    const suffix = "_" + month;
-    const created = [];
-    const skipped = [];
-    for (const srcName of TABS) {
-      const dstName = srcName + suffix;
-      try {
-        const sheetId = await copySheet(srcName, dstName);
-        if (sheetId !== null) {
-          created.push(dstName);
-        } else {
-          skipped.push(srcName + " (missing)");
-        }
-      } catch {
-        skipped.push(srcName + " (error)");
-      }
-    }
-    await log(
-      "Snapshot.snapshotMonth",
-      "Month " + month + ": created " + created.length + " snapshots" + (skipped.length ? ", skipped: " + skipped.join(", ") : "")
-    );
-    return { created, skipped };
-  }
-  async function snapshotCurrentMonth() {
-    let month;
-    try {
-      month = await getCell("dashboard", "B4");
-    } catch {
-      await error("Snapshot.snapshotCurrentMonth", "dashboard tab not found");
-      return;
-    }
-    if (!month || typeof month !== "string" || month.indexOf("-") === -1) {
-      await error("Snapshot.snapshotCurrentMonth", "Invalid month in dashboard B4: " + month);
-      return;
-    }
-    return snapshotMonth(month);
-  }
-  async function autoSnapshotOnRollover(previousMonth) {
-    if (!previousMonth) return;
-    await log("Snapshot.autoSnapshotOnRollover", "Auto-snapshotting previous month: " + previousMonth);
-    return snapshotMonth(previousMonth);
-  }
-  var TABS;
-  var init_snapshot = __esm({
-    "src/snapshot/index.ts"() {
-      "use strict";
-      init_sheet_api();
-      init_debug();
-      TABS = ["transactions", "interview_income", "adjustments", "dashboard"];
-    }
-  });
-
-  // src/calendar/index.ts
-  var calendar_exports = {};
-  __export(calendar_exports, {
-    dumpCalendarEvents: () => dumpCalendarEvents,
-    looksLikeInterview: () => looksLikeInterview,
-    parseCalendarEvents: () => parseCalendarEvents
-  });
-  async function parseCalendarEvents(daysBack, daysForward) {
-    const db = daysBack || 90;
-    const df = daysForward || 30;
-    const events = gasCalendar.listEvents(db, df);
-    const resolved = events instanceof Promise ? await events : events;
-    await log("Calendar.parseCalendarEvents", "Scanning " + resolved.length + " events");
-    const now = /* @__PURE__ */ new Date();
-    const interviews = [];
-    for (const e of resolved) {
-      if (!looksLikeInterview(e.summary, e.description)) continue;
-      const tz = getTimezone();
-      const dateStr = e.startDate.toLocaleDateString("en-CA", { timeZone: tz });
-      const status = e.startDate < now ? "Past" : "Upcoming";
-      interviews.push({ date: dateStr, title: e.summary, status });
-    }
-    await log("Calendar.parseCalendarEvents", "Found " + interviews.length + " interview events");
-    const headers = ["date", "title", "status"];
-    await ensureTab(TAB2, headers);
-    const rows = interviews.map((iv) => [iv.date, iv.title, iv.status]);
-    await clearTab(TAB2, true);
-    await setValues(TAB2 + "!A1", [headers]);
-    if (rows.length > 0) await setValues(TAB2 + "!A2", rows);
-    await log("Calendar.parseCalendarEvents", "Wrote " + rows.length + " rows to " + TAB2);
-  }
-  async function dumpCalendarEvents(daysBack, daysForward) {
-    const db = daysBack || 30;
-    const df = daysForward || 30;
-    const events = gasCalendar.listEvents(db, df);
-    const resolved = events instanceof Promise ? await events : events;
-    await log("Calendar.dumpCalendarEvents", "Found " + resolved.length + " events");
-    for (const e of resolved) {
-      const dateStr = e.startDate.toLocaleDateString("en-CA");
-      await log("Calendar.dumpCalendarEvents", dateStr + " | " + e.summary + " | " + e.description.substring(0, 60));
-    }
-  }
-  function looksLikeInterview(summary, description = "") {
-    const summaryTrimmed = summary.trim();
-    if (/^interview with .+ \| .+ interviews$/i.test(summaryTrimmed)) {
-      return true;
-    }
-    const combined = (summary + " " + description).toLowerCase();
-    if (combined.includes("interviewkickstart") || combined.includes("interview kickstart")) {
-      return true;
-    }
-    return false;
-  }
-  var TAB2;
-  var init_calendar = __esm({
-    "src/calendar/index.ts"() {
-      "use strict";
-      init_gas_bundle();
-      init_sheet_api();
-      init_debug();
-      init_runtime();
-      TAB2 = "interview_income";
-    }
-  });
-
   // src/savings/index.ts
   var savings_exports = {};
   __export(savings_exports, {
@@ -977,12 +853,12 @@
     writeSheet: () => writeSheet
   });
   async function ensureTab3() {
-    await ensureTab(TAB3, HEADERS2);
+    await ensureTab(TAB2, HEADERS2);
   }
   async function readExisting() {
     const existing = {};
     try {
-      const data = await getValues(TAB3);
+      const data = await getValues(TAB2);
       for (let i = 1; i < data.length; i++) {
         const month = String(data[i][0] || "").trim();
         if (!month) continue;
@@ -1099,7 +975,7 @@
   async function writeSheet(byMonth) {
     let existingRows = [];
     try {
-      const existing = await getValues(TAB3);
+      const existing = await getValues(TAB2);
       if (existing && existing.length > 1) {
         existingRows = existing.slice(1);
       }
@@ -1128,10 +1004,10 @@
       const formula = "=C" + rowNum + "+D" + rowNum + "-E" + rowNum + "+F" + rowNum + "+G" + rowNum + "-H" + rowNum;
       rows.push([row[0], formula, row[2], row[3], row[4], row[5], row[6], row[7], row[8]]);
     }
-    await clearTab(TAB3, false);
-    await setValues(TAB3 + "!A1", [HEADERS2]);
+    await clearTab(TAB2, false);
+    await setValues(TAB2 + "!A1", [HEADERS2]);
     if (rows.length > 0) {
-      await setValues(TAB3 + "!A2", rows);
+      await setValues(TAB2 + "!A2", rows);
     }
     await log("Savings.writeSheet", "Wrote " + rows.length + " row(s) (" + sortedMonths.length + " total months, " + updatedMonths.length + " updated)");
   }
@@ -1193,7 +1069,7 @@
     await populateManualAdjustments();
   }
   async function populateManualAdjustments() {
-    const data = await getValues(TAB3);
+    const data = await getValues(TAB2);
     if (!data || data.length < 2) {
       await error("populateManualAdjustments", "savings_tracker tab not found");
       return;
@@ -1211,16 +1087,16 @@
       const rawMonth = normalizeMonth(data[row][0]);
       if (manual[rawMonth]) {
         const rowNum = row + 1;
-        await setCell(TAB3, "F" + rowNum, manual[rawMonth].transfers);
-        await setCell(TAB3, "G" + rowNum, manual[rawMonth].retirement);
-        await setCell(TAB3, "H" + rowNum, manual[rawMonth].ally);
+        await setCell(TAB2, "F" + rowNum, manual[rawMonth].transfers);
+        await setCell(TAB2, "G" + rowNum, manual[rawMonth].retirement);
+        await setCell(TAB2, "H" + rowNum, manual[rawMonth].ally);
         await log("populateManualAdjustments", "Set manual values for " + rawMonth);
         updated++;
       }
     }
     await log("populateManualAdjustments", "Updated " + updated + " row(s).");
   }
-  var TAB3, HEADERS2, BANK_ITEMS, EXCLUDE_KEYWORDS;
+  var TAB2, HEADERS2, BANK_ITEMS, EXCLUDE_KEYWORDS;
   var init_savings = __esm({
     "src/savings/index.ts"() {
       "use strict";
@@ -1228,7 +1104,7 @@
       init_debug();
       init_plaid();
       init_runtime();
-      TAB3 = "savings_tracker";
+      TAB2 = "savings_tracker";
       HEADERS2 = [
         "month",
         "net_savings",
@@ -1242,6 +1118,130 @@
       ];
       BANK_ITEMS = ["ally", "bofa", "fidelity"];
       EXCLUDE_KEYWORDS = ["venmo", "zelle", "cash app", "paypal", "cashapp", "atm", "withdrawal", "withdrwl"];
+    }
+  });
+
+  // src/snapshot/index.ts
+  var snapshot_exports = {};
+  __export(snapshot_exports, {
+    autoSnapshotOnRollover: () => autoSnapshotOnRollover,
+    snapshotCurrentMonth: () => snapshotCurrentMonth,
+    snapshotMonth: () => snapshotMonth
+  });
+  async function snapshotMonth(month) {
+    const suffix = "_" + month;
+    const created = [];
+    const skipped = [];
+    for (const srcName of TABS) {
+      const dstName = srcName + suffix;
+      try {
+        const sheetId = await copySheet(srcName, dstName);
+        if (sheetId !== null) {
+          created.push(dstName);
+        } else {
+          skipped.push(srcName + " (missing)");
+        }
+      } catch {
+        skipped.push(srcName + " (error)");
+      }
+    }
+    await log(
+      "Snapshot.snapshotMonth",
+      "Month " + month + ": created " + created.length + " snapshots" + (skipped.length ? ", skipped: " + skipped.join(", ") : "")
+    );
+    return { created, skipped };
+  }
+  async function snapshotCurrentMonth() {
+    let month;
+    try {
+      month = await getCell("dashboard", "B4");
+    } catch {
+      await error("Snapshot.snapshotCurrentMonth", "dashboard tab not found");
+      return;
+    }
+    if (!month || typeof month !== "string" || month.indexOf("-") === -1) {
+      await error("Snapshot.snapshotCurrentMonth", "Invalid month in dashboard B4: " + month);
+      return;
+    }
+    return snapshotMonth(month);
+  }
+  async function autoSnapshotOnRollover(previousMonth) {
+    if (!previousMonth) return;
+    await log("Snapshot.autoSnapshotOnRollover", "Auto-snapshotting previous month: " + previousMonth);
+    return snapshotMonth(previousMonth);
+  }
+  var TABS;
+  var init_snapshot = __esm({
+    "src/snapshot/index.ts"() {
+      "use strict";
+      init_sheet_api();
+      init_debug();
+      TABS = ["transactions", "interview_income", "adjustments", "dashboard"];
+    }
+  });
+
+  // src/calendar/index.ts
+  var calendar_exports = {};
+  __export(calendar_exports, {
+    dumpCalendarEvents: () => dumpCalendarEvents,
+    looksLikeInterview: () => looksLikeInterview,
+    parseCalendarEvents: () => parseCalendarEvents
+  });
+  async function parseCalendarEvents(daysBack, daysForward) {
+    const db = daysBack || 90;
+    const df = daysForward || 30;
+    const events = gasCalendar.listEvents(db, df);
+    const resolved = events instanceof Promise ? await events : events;
+    await log("Calendar.parseCalendarEvents", "Scanning " + resolved.length + " events");
+    const now = /* @__PURE__ */ new Date();
+    const interviews = [];
+    for (const e of resolved) {
+      if (!looksLikeInterview(e.summary, e.description)) continue;
+      const tz = getTimezone();
+      const dateStr = e.startDate.toLocaleDateString("en-CA", { timeZone: tz });
+      const status = e.startDate < now ? "Past" : "Upcoming";
+      interviews.push({ date: dateStr, title: e.summary, status });
+    }
+    await log("Calendar.parseCalendarEvents", "Found " + interviews.length + " interview events");
+    const headers = ["date", "title", "status"];
+    await ensureTab(TAB3, headers);
+    const rows = interviews.map((iv) => [iv.date, iv.title, iv.status]);
+    await clearTab(TAB3, true);
+    await setValues(TAB3 + "!A1", [headers]);
+    if (rows.length > 0) await setValues(TAB3 + "!A2", rows);
+    await log("Calendar.parseCalendarEvents", "Wrote " + rows.length + " rows to " + TAB3);
+  }
+  async function dumpCalendarEvents(daysBack, daysForward) {
+    const db = daysBack || 30;
+    const df = daysForward || 30;
+    const events = gasCalendar.listEvents(db, df);
+    const resolved = events instanceof Promise ? await events : events;
+    await log("Calendar.dumpCalendarEvents", "Found " + resolved.length + " events");
+    for (const e of resolved) {
+      const dateStr = e.startDate.toLocaleDateString("en-CA");
+      await log("Calendar.dumpCalendarEvents", dateStr + " | " + e.summary + " | " + e.description.substring(0, 60));
+    }
+  }
+  function looksLikeInterview(summary, description = "") {
+    const summaryTrimmed = summary.trim();
+    if (/^interview with .+ \| .+ interviews$/i.test(summaryTrimmed)) {
+      return true;
+    }
+    const combined = (summary + " " + description).toLowerCase();
+    if (combined.includes("interviewkickstart") || combined.includes("interview kickstart")) {
+      return true;
+    }
+    return false;
+  }
+  var TAB3;
+  var init_calendar = __esm({
+    "src/calendar/index.ts"() {
+      "use strict";
+      init_gas_bundle();
+      init_sheet_api();
+      init_debug();
+      init_runtime();
+      TAB3 = "interview_income";
     }
   });
 
@@ -1450,7 +1450,7 @@
       if (status === "Upcoming" && !countUpcoming) continue;
       count++;
     }
-    const standardCount = Math.max(0, count - nonStandardCount - lateCancellationCount);
+    const standardCount = Math.max(0, count - nonStandardCount);
     const gross = standardCount * standardRate + nonStandardCount * nonStandardRate + lateCancellationCount * cancellationRate;
     await log("Dashboard.calculateInterviewIncome", "Counted " + count + " interviews in " + month + " (std=" + standardCount + " nonstd=" + nonStandardCount + " cancel=" + lateCancellationCount + ") gross=$" + gross + " after tax=$" + Math.round(gross * taxScalar * 100) / 100);
     return Math.round(gross * taxScalar * 100) / 100;
@@ -1495,13 +1495,14 @@
   async function maybeResetManualInputs() {
     const ss2 = await getValues("dashboard");
     if (!ss2 || ss2.length < 31) return;
-    const storedMonth = await getCell("dashboard", "B32");
-    const currentMonth = String(ss2[3][1] || "").trim();
-    if (storedMonth && String(storedMonth) !== currentMonth) {
+    const rawStored = await getCell("dashboard", "B32");
+    const storedMonth = normalizeMonth(rawStored);
+    const currentMonth = normalizeMonth(ss2[3][1]);
+    if (storedMonth && currentMonth && storedMonth !== currentMonth) {
       await log("Dashboard.maybeResetManualInputs", "Month rollover detected: " + storedMonth + " -> " + currentMonth);
       try {
         const { autoSnapshotOnRollover: autoSnapshotOnRollover2 } = await Promise.resolve().then(() => (init_snapshot(), snapshot_exports));
-        await autoSnapshotOnRollover2(String(storedMonth));
+        await autoSnapshotOnRollover2(storedMonth);
       } catch (e) {
         await error("Dashboard.maybeResetManualInputs", "Snapshot failed: " + (e instanceof Error ? e.message : String(e)));
       }
@@ -1509,7 +1510,9 @@
       await setCell("dashboard", "B31", 0);
       await log("Dashboard.maybeResetManualInputs", "Reset manual inputs for new month: " + currentMonth);
     }
-    await setCell("dashboard", "B32", currentMonth);
+    if (currentMonth) {
+      await setCell("dashboard", "B32", currentMonth);
+    }
   }
   function padMonth(m) {
     return m < 10 ? "0" + m : String(m);
@@ -1576,6 +1579,7 @@
       init_recurring();
       init_config();
       init_runtime();
+      init_savings();
       TAB4 = "dashboard";
     }
   });
