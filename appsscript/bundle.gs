@@ -1162,16 +1162,63 @@
   }
   function countMatches(searchTerm, txData) {
     let count = 0;
-    const term = searchTerm.toLowerCase().trim();
-    const firstToken = term.split(/\s+/)[0];
     for (const t of txData) {
-      const merchant = String(t.merchant_name || "").toLowerCase();
-      const name = String(t.name || "").toLowerCase();
-      if (merchant.indexOf(firstToken) >= 0 || name.indexOf(firstToken) >= 0) {
+      if (isMatch(searchTerm, t)) {
         count++;
       }
     }
     return count;
+  }
+  function isMatch(searchTerm, tx) {
+    const term = searchTerm.toLowerCase().trim();
+    if (!term) return false;
+    const merchant = String(tx.merchant_name || "").toLowerCase().trim();
+    const name = String(tx.name || "").toLowerCase().trim();
+    const targets = [merchant, name].filter(Boolean);
+    if (targets.length === 0) return false;
+    for (const target of targets) {
+      if (target.includes(term)) return true;
+    }
+    const cleanTerm = term.replace(/[^a-z0-9]/g, "");
+    if (cleanTerm.length >= 3) {
+      for (const target of targets) {
+        const cleanTarget = target.replace(/[^a-z0-9]/g, "");
+        if (cleanTarget.includes(cleanTerm)) return true;
+        if (cleanTarget.length >= 4 && cleanTerm.includes(cleanTarget)) return true;
+      }
+    }
+    const tokens = term.split(/\s+/).filter(Boolean);
+    if (tokens.length === 1) {
+      const single = tokens[0];
+      const escaped = escapeRegex(single);
+      const wordRegex = new RegExp(`\\b${escaped}\\b`, "i");
+      for (const target of targets) {
+        if (single.length >= 4 ? target.includes(single) : wordRegex.test(target)) {
+          return true;
+        }
+      }
+    } else if (tokens.length > 1) {
+      for (const target of targets) {
+        const allTokensMatch = tokens.every((tok) => {
+          if (tok.length >= 4) {
+            return target.includes(tok);
+          }
+          const regex = new RegExp(`\\b${escapeRegex(tok)}\\b`, "i");
+          return regex.test(target);
+        });
+        if (allTokensMatch) return true;
+        const significantTokenMatch = tokens.some((tok) => {
+          if (tok.length < 4) return false;
+          const regex = new RegExp(`\\b${escapeRegex(tok)}\\b`, "i");
+          return regex.test(target) || target.includes(tok);
+        });
+        if (significantTokenMatch) return true;
+      }
+    }
+    return false;
+  }
+  function escapeRegex(str) {
+    return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   }
   var TAB2;
   var init_recurring = __esm({
