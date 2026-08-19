@@ -15,10 +15,18 @@ interface TransactionMatch {
 }
 
 const TAB = 'recurring';
-const HEADERS = ['merchant_name', 'amount', 'frequency', 'day_of_month', 'notes'];
+const HEADERS = ['merchant_name', 'amount', 'frequency', 'day_of_month', 'notes', 'match_token'];
 
 export async function init(): Promise<void> {
   await sheetApi.ensureTab(TAB, HEADERS);
+}
+
+/**
+ * Normalize a string for deterministic matching:
+ * lowercase, strip non-alphanumeric, trim whitespace.
+ */
+function normalize(s: string): string {
+  return s.toLowerCase().replace(/[^a-z0-9]/g, '').trim();
 }
 
 export async function calculateUpcoming(year: number, monthNum: number, _today: Date): Promise<RecurringResult> {
@@ -29,6 +37,7 @@ export async function calculateUpcoming(year: number, monthNum: number, _today: 
   const merchCol = header.indexOf('merchant_name');
   const amtCol = header.indexOf('amount');
   const freqCol = header.indexOf('frequency');
+  const tokenCol = header.indexOf('match_token');
   if (merchCol < 0 || amtCol < 0 || freqCol < 0) {
     await Debug.error('Recurring.calculateUpcoming', 'recurring tab missing required columns');
     return { upcoming: 0, items: [] };
@@ -47,10 +56,13 @@ export async function calculateUpcoming(year: number, monthNum: number, _today: 
     const merchant = String(row[merchCol] || '').toLowerCase().trim();
     const amount = Number(row[amtCol]) || 0;
     const frequency = String(row[freqCol] || '').toLowerCase().trim();
+    // Use match_token if provided; otherwise normalize merchant_name as fallback
+    const rawToken = tokenCol >= 0 ? String(row[tokenCol] || '').trim() : '';
+    const matchToken = normalize(rawToken || merchant);
 
     if (!merchant || amount <= 0) continue;
 
-    const postedCount = countMatches(merchant, txData);
+    const postedCount = countMatches(matchToken, txData);
     const expectedCount = frequency === 'weekly' ? 4 : 1;
     const remainingCount = Math.max(0, expectedCount - postedCount);
     const upcomingAmount = Math.round(remainingCount * amount * 100) / 100;
@@ -97,76 +109,17 @@ async function getTransactionData(startDate: string, endDate: string): Promise<T
   return results;
 }
 
-function countMatches(searchTerm: string, txData: TransactionMatch[]): number {
+function countMatches(matchToken: string, txData: TransactionMatch[]): number {
   let count = 0;
   for (const t of txData) {
-    if (isMatch(searchTerm, t)) {
-      count++;
+    const merchants = [normalize(t.merchant_name), normalize(t.name)].filter(Boolean);
+    for (const m of merchants) {
+      // Match if the normalized transaction string contains the match token
+      if (matchToken && m.includes(matchToken)) {
+        count++;
+        break;
+      }
     }
   }
   return count;
-}
-
-function isMatch(searchTerm: string, tx: TransactionMatch): boolean {
-  const term = searchTerm.toLowerCase().trim();
-  if (!term) return false;
-
-  const merchant = String(tx.merchant_name || '').toLowerCase().trim();
-  const name = String(tx.name || '').toLowerCase().trim();
-  const targets = [merchant, name].filter(Boolean);
-  if (targets.length === 0) return false;
-
-  // 1. Direct full substring match
-  for (const target of targets) {
-    if (target.includes(term)) return true;
-  }
-
-  // 2. Cleaned non-alphanumeric match
-  const cleanTerm = term.replace(/[^a-z0-9]/g, '');
-  if (cleanTerm.length >= 3) {
-    for (const target of targets) {
-      const cleanTarget = target.replace(/[^a-z0-9]/g, '');
-      if (cleanTarget.includes(cleanTerm)) return true;
-      if (cleanTarget.length >= 4 && cleanTerm.includes(cleanTarget)) return true;
-    }
-  }
-
-  // 3. Token-based matching
-  const tokens = term.split(/\s+/).filter(Boolean);
-  if (tokens.length === 1) {
-    const single = tokens[0];
-    const escaped = escapeRegex(single);
-    const wordRegex = new RegExp(`\\b${escaped}\\b`, 'i');
-    for (const target of targets) {
-      if (single.length >= 4 ? target.includes(single) : wordRegex.test(target)) {
-        return true;
-      }
-    }
-  } else if (tokens.length > 1) {
-    for (const target of targets) {
-      // Check if ALL tokens match as whole words or substrings
-      const allTokensMatch = tokens.every((tok) => {
-        if (tok.length >= 4) {
-          return target.includes(tok);
-        }
-        const regex = new RegExp(`\\b${escapeRegex(tok)}\\b`, 'i');
-        return regex.test(target);
-      });
-      if (allTokensMatch) return true;
-
-      // Check if any significant token (length >= 4) matches as a whole word or substring
-      const significantTokenMatch = tokens.some((tok) => {
-        if (tok.length < 4) return false;
-        const regex = new RegExp(`\\b${escapeRegex(tok)}\\b`, 'i');
-        return regex.test(target) || target.includes(tok);
-      });
-      if (significantTokenMatch) return true;
-    }
-  }
-
-  return false;
-}
-
-function escapeRegex(str: string): string {
-  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
