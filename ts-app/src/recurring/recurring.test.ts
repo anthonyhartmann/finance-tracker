@@ -103,6 +103,24 @@ describe('recurring', () => {
 
 
 
+describe('normalize null safety', () => {
+  it('handles null and undefined transaction names gracefully', async () => {
+    mockSheetApi.getValues
+      .mockResolvedValueOnce([
+        ['merchant_name', 'amount', 'frequency', 'day_of_month', 'notes', 'match_token'],
+        ['Netflix', '15', 'monthly', '15', '', 'netflix'],
+      ])
+      .mockResolvedValueOnce([
+        ['account_name', 'date', 'merchant_name', 'amount', 'transaction_id', 'account_id', 'name', 'category', 'payment_channel', 'pending', 'currency', 'synced_at'],
+        ['Chase', '2026-07-15', null, -15, 't1', 'a1', null, 'Entertainment', 'online', 'FALSE', 'USD', 'now'],
+        ['Chase', '2026-07-16', 'Netflix Inc', -15, 't2', 'a1', 'NETFLIX.COM', 'Entertainment', 'online', 'FALSE', 'USD', 'now'],
+      ]);
+
+    const result = await calculateUpcoming(2026, 7, new Date('2026-07-20'));
+    expect(result.upcoming).toBe(0);
+  });
+});
+
 describe('recurring edge cases', () => {
   it('handles Date objects from GAS sheets (posted bill should not show as upcoming)', async () => {
     mockSheetApi.getValues

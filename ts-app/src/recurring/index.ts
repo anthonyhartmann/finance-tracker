@@ -25,8 +25,8 @@ export async function init(): Promise<void> {
  * Normalize a string for deterministic matching:
  * lowercase, strip non-alphanumeric, trim whitespace.
  */
-function normalize(s: string): string {
-  return s.toLowerCase().replace(/[^a-z0-9]/g, '').trim();
+function normalize(s: unknown): string {
+  return String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '').trim();
 }
 
 export async function calculateUpcoming(year: number, monthNum: number, _today: Date): Promise<RecurringResult> {
